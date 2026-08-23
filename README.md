@@ -10,8 +10,9 @@
 
 ---
 
-> **Status: early development.** Nothing is shippable yet. The engine is done and
-> tested; the Windows shell is next.
+> **Status: early development.** The engine, the app shell and the overlay work.
+> Classic and Voice-Activated modes run today; Word Tracking is waiting on the
+> on-device speech engine.
 
 This is the Windows counterpart to [Textream](https://github.com/f/textream), the
 macOS teleprompter by [Fatih Kadir Akın](https://fka.dev). It is a ground-up
@@ -46,10 +47,31 @@ crates/prompt-core/     Platform-neutral engine — no OS calls, no audio device
 ├── matcher.rs          Character- + word-level speech alignment
 ├── vad.rs              Level metering and the hysteretic speech gate
 └── scroll.rs           Constant-pace scrolling for Classic / Voice-Activated
+
+src-tauri/              Windows shell
+├── window_effects.rs   NOACTIVATE, click-through, exclude-from-capture
+├── overlay.rs          Placement and multi-monitor geometry
+├── session.rs          Live session state and the webview-facing DTOs
+└── lib.rs              Commands, events, tray icon
+
+src/                    Svelte UI
+├── App.svelte          Editor and controls
+├── Overlay.svelte      The prompter pill
+└── lib/                Typed command wrappers, microphone metering
 ```
 
 The engine deliberately knows nothing about Windows. That keeps it testable
-without a microphone, and it means a Linux build is mostly a shell away.
+without a microphone and without launching the app.
+
+### Windows specifics
+
+| Concern | Mechanism |
+|---|---|
+| Never steals focus | `WS_EX_NOACTIVATE`, applied once at startup |
+| Out of Alt-Tab | `WS_EX_TOOLWINDOW` |
+| Clicks pass through to OBS | `WS_EX_TRANSPARENT` |
+| Invisible to screen share | `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)`, needs Windows 10 2004+ |
+| Sits above the taskbar | Plain always-on-top window, **not** a registered AppBar — an AppBar shrinks every maximised window and leaves the work area wrong if the app dies |
 
 ### The three guidance modes
 
@@ -61,7 +83,26 @@ without a microphone, and it means a Linux build is mostly a shell away.
 
 ## Building
 
-Requires Rust 1.80+ and the MSVC toolchain.
+Requires Rust 1.80+ with the MSVC toolchain, Node 20+, and WebView2 (preinstalled
+on Windows 11).
+
+```bash
+npm install
+```
+
+Run the app in development:
+
+```bash
+npm run app
+```
+
+Build the installer:
+
+```bash
+npm run app:build
+```
+
+Run the test suite:
 
 ```bash
 cargo test --workspace
@@ -70,12 +111,16 @@ cargo test --workspace
 ## Roadmap
 
 - [x] `prompt-core` — engine, cue handling, matcher, VAD, pacing
-- [ ] Tauri shell: top-centre overlay, floating window, fullscreen
-- [ ] On-device streaming speech recognition
-- [ ] Hide-from-capture, click-through, non-activating overlay windows
+- [x] Tauri shell: top-centre pill, floating, fullscreen, transport strip
+- [x] Hide-from-capture, click-through, non-activating overlay
+- [x] System tray
+- [x] Classic and Voice-Activated modes end to end
+- [ ] On-device streaming speech recognition → unlocks Word Tracking
+- [ ] Tap a word to jump; scroll to catch up
 - [ ] Remote connection: local HTTP + WebSocket view with QR pairing
-- [ ] Script editor, `.textream` files, PowerPoint notes import
-- [ ] System tray, transport strip, global shortcuts
+- [ ] `.textream` files, PowerPoint notes import, multi-page scripts
+- [ ] Font, size and colour settings; mirror output for prompter rigs
+- [ ] Global shortcuts
 
 ## Credits
 

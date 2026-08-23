@@ -17,3 +17,6 @@ Thumbs.db
 # Local agent/tooling state, never part of the project.
 .omc/
 .claude/
+
+# Tauri generates permission schemas here at build time.
+src-tauri/gen/

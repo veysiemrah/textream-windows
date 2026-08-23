@@ -1,0 +1,30 @@
+[package]
+name = "textream"
+description = "Teleprompter for Windows with word tracking, auto-scroll and voice-activated scrolling."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+# Tauri wants a cdylib for mobile targets and a staticlib-free rlib for the
+# desktop binary to link against.
+name = "textream_lib"
+crate-type = ["lib", "cdylib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+prompt-core.workspace = true
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_Graphics_Gdi",
+] }
