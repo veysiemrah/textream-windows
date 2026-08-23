@@ -1,0 +1,20 @@
+[workspace]
+members = ["crates/prompt-core"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+authors = ["CRTkafa"]
+
+[workspace.dependencies]
+unicode-segmentation = "1.12"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

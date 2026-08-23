@@ -1,0 +1,19 @@
+/target
+**/target
+Cargo.lock.bak
+
+node_modules/
+dist/
+.vite/
+
+# Speech models are large binaries fetched at setup time, never committed.
+/models/
+
+*.pdb
+*.log
+.DS_Store
+Thumbs.db
+
+# Local agent/tooling state, never part of the project.
+.omc/
+.claude/

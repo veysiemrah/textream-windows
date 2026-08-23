@@ -1,0 +1,14 @@
+[package]
+name = "prompt-core"
+description = "Platform-neutral teleprompter engine: script segmentation, cue handling, speech-to-script alignment and voice activity detection."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+unicode-segmentation.workspace = true
+
+[lints.rust]
+missing_debug_implementations = "warn"
