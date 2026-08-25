@@ -8,16 +8,50 @@
   Built for streamers, interviewers, presenters, and podcasters.
 </p>
 
+<p align="center">
+  The Windows port of <a href="https://github.com/f/textream"><strong>Textream</strong></a>
+  by <a href="https://fka.dev">Fatih Kadir Akın</a>
+</p>
+
 ---
 
 > **Status: early development.** All three guidance modes work. Speech
 > recognition is English-only so far — see [Speech recognition](#speech-recognition).
 
-This is the Windows counterpart to [Textream](https://github.com/f/textream), the
-macOS teleprompter by [Fatih Kadir Akın](https://fka.dev). It is a ground-up
-implementation rather than a fork — the macOS app is SwiftUI and AppKit through
-and through, so nothing ports across as code. What carries over is the product
-and the algorithms, with the original author's blessing to use the name and icon.
+## The original
+
+[**Textream**](https://github.com/f/textream) is a free, open-source macOS
+teleprompter by [Fatih Kadir Akın](https://fka.dev), from an original idea by
+[Semih Kışlar](https://x.com/semihdev). It shows your script in a Dynamic
+Island–style overlay at the top of the screen, highlights each word as you say
+it using on-device speech recognition, and stays invisible to your audience.
+
+**On a Mac? Use the original — it is the more complete app.**
+[github.com/f/textream](https://github.com/f/textream)
+
+This project exists because that app is macOS-only, and it is built with the
+original author's blessing to use the Textream name and icon.
+
+### Why a separate repository and not a fork
+
+There is no shared code to fork. The macOS app is SwiftUI and AppKit throughout:
+the notch overlay, the settings UI, the text layout, and the speech engine are
+all Apple frameworks, and none of it compiles anywhere else. A fork would carry
+a git history no commit here ever touches, while GitHub hides forks from
+repository search — costing discoverability for nothing in return.
+
+What carries over is the product and the algorithms, reimplemented in Rust.
+
+### What is the same, and what is not
+
+| | macOS Textream | Textream for Windows |
+|---|---|---|
+| Guidance modes | Word Tracking, Classic, Voice-Activated | same three |
+| Cue syntax | `[stage directions]` shown but never spoken | same |
+| Privacy | fully on-device | same, deliberately |
+| Overlay home | Dynamic Island under the notch | pill on the top edge — see below |
+| Speech engine | Apple's recogniser, dozens of languages | sherpa-onnx, English so far |
+| Extras | Sidecar, PowerPoint import, remote view, mirror output | not yet — see the roadmap |
 
 ## Design decisions
 
@@ -119,8 +153,8 @@ Requires:
 winget install LLVM.LLVM
 ```
 
-Installing LLVM to its default location is enough; bindgen finds it without any
-environment variable. If `libclang.dll` lives somewhere else, point
+The default install location is enough — bindgen finds `libclang.dll` there on
+its own, with no environment variable. If yours lives elsewhere, point
 `LIBCLANG_PATH` at the directory containing it.
 
 ```bash
@@ -162,10 +196,21 @@ cargo test --workspace
 
 ## Credits
 
-Original idea by [Semih Kışlar](https://x.com/semihdev).
-macOS Textream by [Fatih Kadir Akın](https://fka.dev).
-Windows version by [CRTkafa](https://github.com/CRTkafa).
+Textream is [Fatih Kadir Akın](https://fka.dev)'s work, from an original idea by
+[Semih Kışlar](https://x.com/semihdev). This port exists because that app is
+good enough to want on another platform, and it carries the Textream name and
+icon with his blessing. The cue syntax, the three guidance modes, and the
+approach to word tracking are all his design.
+
+- Original macOS app: [github.com/f/textream](https://github.com/f/textream)
+- Windows port: [CRTkafa](https://github.com/CRTkafa)
+
+Speech recognition uses [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) by
+the k2-fsa team, with streaming models published by
+[csukuangfj](https://huggingface.co/csukuangfj).
 
 ## License
 
-MIT
+MIT, matching the original. Portions of the script-alignment, cue-handling and
+voice-activity logic are reimplementations of algorithms from
+[f/textream](https://github.com/f/textream); see [LICENSE](LICENSE).
