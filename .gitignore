@@ -20,3 +20,6 @@ Thumbs.db
 
 # Tauri generates permission schemas here at build time.
 src-tauri/gen/
+
+# Native runtime staged by build.rs from the sherpa-onnx crate.
+src-tauri/runtime/

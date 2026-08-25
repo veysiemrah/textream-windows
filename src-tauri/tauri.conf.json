@@ -52,6 +52,13 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ],
+    "resources": {
+      "runtime/onnxruntime.dll": "onnxruntime.dll",
+      "runtime/onnxruntime_providers_shared.dll": "onnxruntime_providers_shared.dll",
+      "runtime/sherpa-onnx-c-api.dll": "sherpa-onnx-c-api.dll",
+      "runtime/sherpa-onnx-cxx-api.dll": "sherpa-onnx-cxx-api.dll",
+      "runtime/cargs.dll": "cargs.dll"
+    },
     "copyright": "Copyright (c) 2026 CRTkafa",
     "shortDescription": "Teleprompter for Windows",
     "longDescription": "A free Windows teleprompter with real-time word tracking, classic auto-scroll and voice-activated scrolling. Everything runs on-device.",

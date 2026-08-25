@@ -1,42 +1,67 @@
 //! Textream for Windows — the app shell.
 //!
 //! The engine lives in [`prompt_core`] and knows nothing about windows or audio.
-//! This crate owns the Windows-specific parts: overlay placement, the extended
-//! style bits that make an overlay behave like an overlay, the tray icon, and
-//! the command surface the webview calls.
+//! This crate owns the Windows-specific parts: microphone capture, streaming
+//! speech recognition, overlay placement, the extended style bits that make an
+//! overlay behave like an overlay, the tray icon, and the command surface the
+//! webview calls.
 
+mod audio;
+mod model;
 mod overlay;
 mod session;
+mod speech;
 mod window_effects;
+
+use std::path::PathBuf;
+use std::sync::Mutex;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
+use audio::AudioEngine;
+use model::{DownloadProgress, ModelStatus};
 use overlay::Geometry;
 use session::{Mode, ProgressView, ScriptView, SessionState};
+use speech::Recognizer;
 
 /// Label of the overlay window, as declared in `tauri.conf.json`.
 const OVERLAY: &str = "overlay";
+
+const EVENT_SCRIPT: &str = "textream://script";
+const EVENT_PROGRESS: &str = "textream://progress";
+const EVENT_DOWNLOAD: &str = "textream://model-download";
+
+/// The running capture session, if any.
+#[derive(Default)]
+struct AudioState(Mutex<Option<AudioEngine>>);
 
 fn overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
     app.get_webview_window(OVERLAY)
         .ok_or_else(|| format!("overlay window '{OVERLAY}' is missing"))
 }
 
+/// Root directory for downloaded models.
+fn data_root(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map_err(|error| format!("no app data directory: {error}"))
+}
+
 /// Pushes the latest position to the overlay.
 ///
 /// The overlay renders from events rather than polling: at eight words a second
 /// a poll loop either lags the highlight or burns CPU next to OBS.
-fn broadcast(app: &AppHandle, progress: ProgressView) -> ProgressView {
-    let _ = app.emit_to(OVERLAY, "textream://progress", progress);
+pub(crate) fn broadcast(app: &AppHandle, progress: ProgressView) -> ProgressView {
+    let _ = app.emit_to(OVERLAY, EVENT_PROGRESS, progress);
     progress
 }
 
 #[tauri::command]
 fn load_script(app: AppHandle, state: tauri::State<'_, SessionState>, text: String) -> ScriptView {
     let view = state.0.lock().unwrap().load(&text);
-    let _ = app.emit_to(OVERLAY, "textream://script", view.clone());
+    let _ = app.emit_to(OVERLAY, EVENT_SCRIPT, view.clone());
     view
 }
 
@@ -54,22 +79,64 @@ fn set_speed(state: tauri::State<'_, SessionState>, words_per_second: f64) {
         .set_words_per_second(words_per_second);
 }
 
+/// Arms the session and, for the modes that need it, opens the microphone.
+///
+/// The recogniser is built here rather than at launch so a user who only ever
+/// uses Classic never pays for loading a 40 MB model — or for having downloaded
+/// one at all.
 #[tauri::command]
-fn start_session(app: AppHandle, state: tauri::State<'_, SessionState>) -> ProgressView {
-    let progress = {
-        let mut session = state.0.lock().unwrap();
-        session.start();
-        session.progress()
+fn start_session(
+    app: AppHandle,
+    session: tauri::State<'_, SessionState>,
+    audio: tauri::State<'_, AudioState>,
+    model_id: Option<String>,
+) -> Result<ProgressView, String> {
+    let mode = {
+        let mut live = session.0.lock().unwrap();
+        live.start();
+        live.mode()
     };
-    broadcast(&app, progress)
+
+    if mode.needs_microphone() {
+        let recognizer = if mode.needs_speech_recognition() {
+            let chosen = model_id
+                .as_deref()
+                .and_then(model::find)
+                .unwrap_or_else(model::default_model);
+            let paths = model::paths(&data_root(&app)?, chosen);
+            if !paths.all_present() {
+                return Err(format!(
+                    "the {} speech model has not been downloaded yet",
+                    chosen.label
+                ));
+            }
+            Some(Recognizer::new(&paths)?)
+        } else {
+            None
+        };
+
+        let engine = AudioEngine::start(app.clone(), recognizer)?;
+        *audio.0.lock().unwrap() = Some(engine);
+    }
+
+    let progress = session.0.lock().unwrap().progress();
+    Ok(broadcast(&app, progress))
 }
 
 #[tauri::command]
-fn stop_session(app: AppHandle, state: tauri::State<'_, SessionState>) -> ProgressView {
+fn stop_session(
+    app: AppHandle,
+    session: tauri::State<'_, SessionState>,
+    audio: tauri::State<'_, AudioState>,
+) -> ProgressView {
+    // Dropping the engine joins the capture and worker threads, so the
+    // microphone is released before the session reports stopped.
+    *audio.0.lock().unwrap() = None;
+
     let progress = {
-        let mut session = state.0.lock().unwrap();
-        session.stop();
-        session.progress()
+        let mut live = session.0.lock().unwrap();
+        live.stop();
+        live.progress()
     };
     broadcast(&app, progress)
 }
@@ -79,34 +146,14 @@ fn is_running(state: tauri::State<'_, SessionState>) -> bool {
     state.0.lock().unwrap().is_running()
 }
 
-#[tauri::command]
-fn feed_transcript(
-    app: AppHandle,
-    state: tauri::State<'_, SessionState>,
-    transcript: String,
-) -> ProgressView {
-    let progress = state.0.lock().unwrap().feed_transcript(&transcript);
-    broadcast(&app, progress)
-}
-
-/// Drives one animation frame: meters audio, advances the clock, reports back.
+/// Advances the clock for the paced modes.
 ///
-/// One call per frame rather than one per concern — the webview runs this at
-/// display rate, and each extra round trip is paid 60 times a second next to
-/// whatever else the presenter is streaming with.
+/// Word Tracking needs no ticking — the audio worker pushes progress events as
+/// speech arrives — but the UI calls this regardless so one animation loop
+/// covers every mode.
 #[tauri::command]
-fn tick(
-    app: AppHandle,
-    state: tauri::State<'_, SessionState>,
-    delta_seconds: f64,
-    level: Option<f32>,
-    timestamp: f64,
-) -> ProgressView {
-    let progress = state
-        .0
-        .lock()
-        .unwrap()
-        .tick(delta_seconds, level, timestamp);
+fn tick(app: AppHandle, state: tauri::State<'_, SessionState>, delta_seconds: f64) -> ProgressView {
+    let progress = state.0.lock().unwrap().tick(delta_seconds);
     broadcast(&app, progress)
 }
 
@@ -128,6 +175,39 @@ fn jump_to_offset(
 ) -> ProgressView {
     let progress = state.0.lock().unwrap().jump_to_offset(offset);
     broadcast(&app, progress)
+}
+
+#[tauri::command]
+fn speech_models(app: AppHandle) -> Result<Vec<ModelStatus>, String> {
+    Ok(model::statuses(&data_root(&app)?))
+}
+
+/// Downloads a speech model, streaming progress to the UI.
+///
+/// Blocking IO on a worker thread rather than in the command itself, so the
+/// webview stays responsive for the minute or two this takes.
+#[tauri::command]
+async fn download_speech_model(app: AppHandle, id: String) -> Result<ModelStatus, String> {
+    let chosen = model::find(&id).ok_or_else(|| format!("unknown speech model: {id}"))?;
+    let root = data_root(&app)?;
+    let emitter = app.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        model::download(&root, chosen, |progress: DownloadProgress| {
+            let _ = emitter.emit(EVENT_DOWNLOAD, progress);
+        })
+        .map(|()| model::status(&root, chosen))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+fn remove_speech_model(app: AppHandle, id: String) -> Result<ModelStatus, String> {
+    let chosen = model::find(&id).ok_or_else(|| format!("unknown speech model: {id}"))?;
+    let root = data_root(&app)?;
+    model::remove(&root, chosen)?;
+    Ok(model::status(&root, chosen))
 }
 
 #[tauri::command]
@@ -218,6 +298,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(SessionState::new())
+        .manage(AudioState::default())
         .setup(|app| {
             let handle = app.handle().clone();
             build_tray(&handle)?;
@@ -240,10 +321,12 @@ pub fn run() {
             start_session,
             stop_session,
             is_running,
-            feed_transcript,
             tick,
             jump_to_word,
             jump_to_offset,
+            speech_models,
+            download_speech_model,
+            remove_speech_model,
             show_overlay,
             hide_overlay,
             set_overlay_geometry,

@@ -10,9 +10,8 @@
 
 ---
 
-> **Status: early development.** The engine, the app shell and the overlay work.
-> Classic and Voice-Activated modes run today; Word Tracking is waiting on the
-> on-device speech engine.
+> **Status: early development.** All three guidance modes work. Speech
+> recognition is English-only so far — see [Speech recognition](#speech-recognition).
 
 This is the Windows counterpart to [Textream](https://github.com/f/textream), the
 macOS teleprompter by [Fatih Kadir Akın](https://fka.dev). It is a ground-up
@@ -51,6 +50,9 @@ crates/prompt-core/     Platform-neutral engine — no OS calls, no audio device
 src-tauri/              Windows shell
 ├── window_effects.rs   NOACTIVATE, click-through, exclude-from-capture
 ├── overlay.rs          Placement and multi-monitor geometry
+├── audio.rs            Microphone capture and the speech worker
+├── speech.rs           Streaming recogniser over the sherpa-onnx C API
+├── model.rs            Model registry and first-run download
 ├── session.rs          Live session state and the webview-facing DTOs
 └── lib.rs              Commands, events, tray icon
 
@@ -81,10 +83,45 @@ without a microphone and without launching the app.
 | **Classic** | `PaceScroller`, gate held open | Not needed |
 | **Voice-Activated** | `PaceScroller` gated by `VoiceActivityDetector` | Required |
 
+## Speech recognition
+
+Word Tracking runs a streaming Zipformer transducer through sherpa-onnx. The
+model is downloaded on first use (about 42 MB) into the app data directory and
+never ships in the installer.
+
+`sherpa-rs` only wraps sherpa-onnx's *offline* recogniser, which decodes a
+finished buffer. A teleprompter cannot wait for the presenter to stop talking,
+so [`speech.rs`](src-tauri/src/speech.rs) calls the online C API directly.
+
+Audio capture lives in Rust rather than in the webview. Recognition needs raw
+PCM, and opening the same input device twice — once for WebAudio metering, once
+for the recogniser — fails on exclusive-mode hardware. One capture path feeds
+both the level meter and the transcriber.
+
+**Only English is available today.** The macOS app gets dozens of languages free
+from Apple's on-device recogniser; there is no equivalent on Windows worth
+using, so each language needs its own model in the registry. Adding one is a
+few lines in [`model.rs`](src-tauri/src/model.rs) plus a published streaming
+model to point at — the limit is which languages sherpa-onnx publishes streaming
+models for, not the app.
+
 ## Building
 
-Requires Rust 1.80+ with the MSVC toolchain, Node 20+, and WebView2 (preinstalled
-on Windows 11).
+Requires:
+
+- Rust 1.80+ with the MSVC toolchain
+- Node 20+
+- WebView2 (preinstalled on Windows 11)
+- **LLVM** — `sherpa-rs-sys` generates its bindings with bindgen, which needs
+  `libclang.dll`
+
+```bash
+winget install LLVM.LLVM
+```
+
+Installing LLVM to its default location is enough; bindgen finds it without any
+environment variable. If `libclang.dll` lives somewhere else, point
+`LIBCLANG_PATH` at the directory containing it.
 
 ```bash
 npm install
@@ -115,7 +152,8 @@ cargo test --workspace
 - [x] Hide-from-capture, click-through, non-activating overlay
 - [x] System tray
 - [x] Classic and Voice-Activated modes end to end
-- [ ] On-device streaming speech recognition → unlocks Word Tracking
+- [x] On-device streaming speech recognition — Word Tracking works
+- [ ] More speech languages in the model registry
 - [ ] Tap a word to jump; scroll to catch up
 - [ ] Remote connection: local HTTP + WebSocket view with QR pairing
 - [ ] `.textream` files, PowerPoint notes import, multi-page scripts

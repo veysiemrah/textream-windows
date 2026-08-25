@@ -1,8 +1,14 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, onMount } from "svelte";
+  import { listen } from "@tauri-apps/api/event";
   import * as api from "./lib/api";
-  import type { Geometry, Mode, Placement } from "./lib/api";
-  import { startMeter, type Meter } from "./lib/microphone";
+  import type {
+    DownloadProgress,
+    Geometry,
+    ModelStatus,
+    Mode,
+    Placement,
+  } from "./lib/api";
 
   const SAMPLE = `Welcome back to the show. [smile at camera]
 
@@ -26,13 +32,22 @@ Today we are shipping something I have wanted for a long time.
   let voiceActive = $state(false);
   let wordProgress = $state(0);
 
-  let meter: Meter | null = null;
+  let models = $state<ModelStatus[]>([]);
+  let modelId = $state<string | null>(null);
+  let downloading = $state(false);
+  let downloadPercent = $state(0);
+
   let frame = 0;
   let lastFrameTime = 0;
 
-  // Word Tracking needs a local speech recogniser, which is the next milestone.
-  // Offering the mode before it exists would just look broken.
-  const SPEECH_READY = false;
+  const selectedModel = $derived(
+    models.find((candidate) => candidate.id === modelId) ?? models[0] ?? null,
+  );
+  const speechReady = $derived(selectedModel?.installed === true);
+  const needsMicrophone = $derived(mode !== "classic");
+  const wordCount = $derived(
+    script.trim() === "" ? 0 : script.trim().split(/\s+/).length,
+  );
 
   const geometry = (): Geometry => ({
     placement,
@@ -41,14 +56,50 @@ Today we are shipping something I have wanted for a long time.
     height,
   });
 
-  const needsMicrophone = $derived(mode !== "classic");
-  const wordCount = $derived(
-    script.trim() === "" ? 0 : script.trim().split(/\s+/).length,
-  );
-
   function say(message: string, kind: "info" | "warn" = "info") {
     status = message;
     statusKind = kind;
+  }
+
+  const megabytes = (bytes: number) => `${Math.round(bytes / 1_000_000)} MB`;
+
+  onMount(() => {
+    void refreshModels();
+    const unlisten = listen<DownloadProgress>(
+      api.EVENT_DOWNLOAD,
+      (event) => {
+        const { received, total } = event.payload;
+        downloadPercent = total > 0 ? (received / total) * 100 : 0;
+      },
+    );
+    return () => {
+      void unlisten.then((off) => off());
+    };
+  });
+
+  async function refreshModels() {
+    try {
+      models = await api.speechModels();
+      modelId ??= models[0]?.id ?? null;
+    } catch (error) {
+      say(`Could not read the speech models: ${error}`, "warn");
+    }
+  }
+
+  async function downloadModel() {
+    if (!selectedModel || downloading) return;
+    downloading = true;
+    downloadPercent = 0;
+    say(`Downloading ${selectedModel.label}…`);
+    try {
+      const updated = await api.downloadSpeechModel(selectedModel.id);
+      models = models.map((m) => (m.id === updated.id ? updated : m));
+      say(`${updated.label} is ready. Word Tracking is available.`);
+    } catch (error) {
+      say(`Download failed: ${error}`, "warn");
+    } finally {
+      downloading = false;
+    }
   }
 
   async function start() {
@@ -61,14 +112,14 @@ Today we are shipping something I have wanted for a long time.
     await api.setMode(mode);
     await api.setSpeed(wordsPerSecond);
 
-    if (needsMicrophone) {
-      try {
-        meter = await startMeter();
-      } catch {
-        say("Microphone unavailable. Switching to Classic.", "warn");
-        mode = "classic";
-        await api.setMode(mode);
-      }
+    // Arm the session before showing anything: it opens the microphone and
+    // loads the model, either of which can fail, and an overlay that appears
+    // and then never moves is worse than one that never appeared.
+    try {
+      await api.startSession(mode === "wordTracking" ? modelId : null);
+    } catch (error) {
+      say(String(error), "warn");
+      return;
     }
 
     await api.showOverlay(geometry());
@@ -83,7 +134,6 @@ Today we are shipping something I have wanted for a long time.
       say("");
     }
 
-    await api.startSession();
     running = true;
     lastFrameTime = performance.now();
     frame = requestAnimationFrame(loop);
@@ -92,8 +142,6 @@ Today we are shipping something I have wanted for a long time.
   async function stop() {
     running = false;
     cancelAnimationFrame(frame);
-    meter?.stop();
-    meter = null;
     level = 0;
     voiceActive = false;
     await api.stopSession();
@@ -104,10 +152,8 @@ Today we are shipping something I have wanted for a long time.
     const delta = (now - lastFrameTime) / 1000;
     lastFrameTime = now;
 
-    level = meter ? meter.level() : 0;
-    // The gate is timestamped in seconds from the same monotonic clock the
-    // hangover is measured against.
-    const progress = await api.tick(delta, meter ? level : null, now / 1000);
+    const progress = await api.tick(delta);
+    level = progress.level;
     voiceActive = progress.voiceActive;
     wordProgress = progress.wordProgress;
 
@@ -134,7 +180,6 @@ Today we are shipping something I have wanted for a long time.
 
   onDestroy(() => {
     cancelAnimationFrame(frame);
-    meter?.stop();
   });
 </script>
 
@@ -163,14 +208,14 @@ Today we are shipping something I have wanted for a long time.
       <div class="segmented">
         <button
           class:active={mode === "wordTracking"}
-          disabled={!SPEECH_READY}
-          title={SPEECH_READY
+          disabled={!speechReady}
+          title={speechReady
             ? "Highlights each word as you say it"
-            : "Needs the on-device speech engine — next milestone"}
+            : "Download the speech model to enable this"}
           onclick={() => pushMode("wordTracking")}
         >
           Word Tracking
-          {#if !SPEECH_READY}<em>soon</em>{/if}
+          {#if !speechReady}<em>needs model</em>{/if}
         </button>
         <button
           class:active={mode === "classic"}
@@ -186,6 +231,32 @@ Today we are shipping something I have wanted for a long time.
     </fieldset>
 
     <fieldset>
+      <legend>Speech model</legend>
+      {#if selectedModel}
+        <div class="model">
+          <div class="model-name">
+            <strong>{selectedModel.label}</strong>
+            <span class="tag">{selectedModel.installed ? "installed" : megabytes(selectedModel.downloadBytes)}</span>
+          </div>
+          {#if !selectedModel.installed}
+            <button class="ghost" disabled={downloading} onclick={downloadModel}>
+              {downloading ? `${downloadPercent.toFixed(0)}%` : "Download"}
+            </button>
+          {/if}
+        </div>
+        {#if downloading}
+          <div class="bar"><span style="width:{downloadPercent}%"></span></div>
+        {/if}
+      {:else}
+        <p class="hint">No speech models are registered.</p>
+      {/if}
+      <p class="hint">
+        Recognition runs entirely on this machine. Nothing is uploaded, and no
+        account is needed.
+      </p>
+    </fieldset>
+
+    <fieldset>
       <legend>Pace — {wordsPerSecond.toFixed(1)} words/s</legend>
       <input
         type="range"
@@ -194,7 +265,13 @@ Today we are shipping something I have wanted for a long time.
         step="0.1"
         bind:value={wordsPerSecond}
         oninput={pushSpeed}
+        disabled={mode === "wordTracking"}
       />
+      <p class="hint">
+        {mode === "wordTracking"
+          ? "Word Tracking follows your voice, so pace is not used."
+          : "How fast the script advances."}
+      </p>
     </fieldset>
 
     <fieldset>
@@ -254,9 +331,11 @@ Today we are shipping something I have wanted for a long time.
       </button>
       {#if running}
         <div class="live">
-          <span class="dot" class:on={voiceActive}></span>
-          <div class="wave"><span style="width:{Math.min(100, level * 400)}%"
-            ></span></div>
+          {#if needsMicrophone}
+            <span class="dot" class:on={voiceActive}></span>
+            <div class="wave"><span style="width:{Math.min(100, level * 400)}%"
+              ></span></div>
+          {/if}
           <span class="counter">word {Math.floor(wordProgress)}</span>
         </div>
       {/if}
@@ -312,7 +391,7 @@ Today we are shipping something I have wanted for a long time.
     flex-direction: column;
     gap: 6px;
     flex: 1;
-    min-height: 180px;
+    min-height: 160px;
   }
   textarea {
     flex: 1;
@@ -338,7 +417,7 @@ Today we are shipping something I have wanted for a long time.
 
   .controls {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
     gap: 16px 24px;
   }
   fieldset {
@@ -403,9 +482,64 @@ Today we are shipping something I have wanted for a long time.
     opacity: 0.7;
   }
 
+  .model {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    border: 1px solid #24282e;
+    border-radius: 8px;
+    background: #14171b;
+  }
+  .model-name {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+  }
+  .tag {
+    color: #6e747c;
+    font-size: 11px;
+  }
+  .ghost {
+    padding: 6px 14px;
+    border: 1px solid #2f3540;
+    border-radius: 6px;
+    background: transparent;
+    color: #e8eaed;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    min-width: 84px;
+  }
+  .ghost:hover:not(:disabled) {
+    background: #1d2127;
+  }
+  .ghost:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+  .bar {
+    height: 3px;
+    margin-top: 8px;
+    border-radius: 2px;
+    background: #1d2127;
+    overflow: hidden;
+  }
+  .bar span {
+    display: block;
+    height: 100%;
+    background: #4f8cff;
+    transition: width 200ms linear;
+  }
+
   input[type="range"] {
     width: 100%;
     accent-color: #4f8cff;
+  }
+  input[type="range"]:disabled {
+    opacity: 0.4;
   }
   select {
     width: 100%;

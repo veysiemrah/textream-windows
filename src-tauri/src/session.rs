@@ -31,6 +31,21 @@ impl From<Mode> for FollowMode {
     }
 }
 
+impl Mode {
+    /// Whether starting this mode has to open the microphone.
+    pub fn needs_microphone(self) -> bool {
+        FollowMode::from(self).requires_microphone()
+    }
+
+    /// Whether this mode has to load a speech model.
+    ///
+    /// Voice-Activated listens but never transcribes, so it costs no model
+    /// download and no ONNX runtime.
+    pub fn needs_speech_recognition(self) -> bool {
+        FollowMode::from(self).requires_speech_recognition()
+    }
+}
+
 /// One word, as the overlay renders it.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -68,6 +83,8 @@ pub struct ProgressView {
     pub active_word: Option<usize>,
     /// Whether speech is currently detected — drives the waveform indicator.
     pub voice_active: bool,
+    /// Latest microphone level, 0..1, for the waveform.
+    pub level: f32,
     pub finished: bool,
 }
 
@@ -82,6 +99,7 @@ pub struct Session {
     words_per_second: f64,
     running: bool,
     voice_active: bool,
+    level: f32,
 }
 
 impl Session {
@@ -139,6 +157,10 @@ impl Session {
         self.sync_drivers_to(offset);
     }
 
+    pub fn mode(&self) -> Mode {
+        self.mode
+    }
+
     pub fn set_words_per_second(&mut self, words_per_second: f64) {
         self.words_per_second = words_per_second;
         if let Some(scroller) = self.scroller.as_mut() {
@@ -178,26 +200,32 @@ impl Session {
     }
 
     /// Feeds one metered audio frame to the speech gate.
+    ///
+    /// Called from the audio worker, not from the UI — capture lives in Rust so
+    /// the recogniser and the meter can share one input device.
     pub fn feed_audio_level(&mut self, level: f32, timestamp: f64) -> ProgressView {
+        self.level = level;
         self.vad.process(level, timestamp);
         self.voice_active = self.vad.is_active(timestamp);
         self.progress()
     }
 
-    /// Advances the paced modes by `delta_seconds`, optionally metering audio
-    /// in the same step.
+    /// Re-anchors the transcript window without losing the reading position.
     ///
-    /// The level is folded in here rather than through a separate call for two
-    /// reasons: it halves the IPC traffic per animation frame, which matters
-    /// for an app that runs beside OBS, and it removes the ordering hazard
-    /// where the gate is read before the frame that would have opened it.
+    /// Called when the recogniser reports an endpoint and its stream is reset:
+    /// the next transcript starts from nothing, so a window still measured from
+    /// the old origin would drag the highlight backwards.
+    pub fn rebase_transcript_window(&mut self) {
+        if let Some(matcher) = self.matcher.as_mut() {
+            matcher.restart_from_current_progress();
+        }
+    }
+
+    /// Advances the paced modes by `delta_seconds`.
     ///
     /// Word Tracking ignores the clock entirely — its position comes from
     /// speech, and letting a timer nudge it too would race the matcher.
-    pub fn tick(&mut self, delta_seconds: f64, level: Option<f32>, timestamp: f64) -> ProgressView {
-        if let Some(level) = level {
-            self.feed_audio_level(level, timestamp);
-        }
+    pub fn tick(&mut self, delta_seconds: f64) -> ProgressView {
         if self.running && self.mode != Mode::WordTracking {
             let gate_open = self.mode == Mode::Classic || self.voice_active;
             if let Some(scroller) = self.scroller.as_mut() {
@@ -269,6 +297,7 @@ impl Session {
             word_progress: script.word_progress_for_character_offset(offset),
             active_word: script.active_word_at(offset).map(|word| word.id),
             voice_active: self.voice_active,
+            level: self.level,
             finished: offset >= script.character_count() && !script.is_empty(),
         }
     }
@@ -315,7 +344,7 @@ mod tests {
         let mut session = loaded("alpha beta gamma");
         assert_eq!(session.feed_transcript("alpha beta").character_offset, 0);
         session.set_mode(Mode::Classic);
-        assert_eq!(session.tick(10.0, None, 0.0).character_offset, 0);
+        assert_eq!(session.tick(10.0).character_offset, 0);
     }
 
     #[test]
@@ -333,7 +362,7 @@ mod tests {
         session.set_mode(Mode::Classic);
         session.set_words_per_second(2.0);
         session.start();
-        assert!(session.tick(1.0, None, 0.0).word_progress >= 2.0);
+        assert!(session.tick(1.0).word_progress >= 2.0);
     }
 
     #[test]
@@ -344,32 +373,37 @@ mod tests {
         session.start();
 
         session.feed_audio_level(0.0, 0.0);
-        assert_eq!(session.tick(1.0, None, 0.0).word_progress, 0.0);
+        assert_eq!(session.tick(1.0).word_progress, 0.0);
 
         session.feed_audio_level(0.9, 1.0);
-        assert!(session.tick(1.0, None, 0.0).word_progress > 0.0);
+        assert!(session.tick(1.0).word_progress > 0.0);
     }
 
     #[test]
-    fn a_metered_tick_opens_the_gate_in_the_same_frame() {
+    fn metering_then_ticking_opens_the_gate() {
         let mut session = loaded("one two three four five six");
         session.set_mode(Mode::VoiceActivated);
         session.set_words_per_second(2.0);
         session.start();
 
-        // Silence holds, and loud speech moves on the very tick that reports
-        // it — the whole point of folding metering into tick.
-        assert_eq!(session.tick(1.0, Some(0.0), 0.0).word_progress, 0.0);
-        let progress = session.tick(1.0, Some(0.9), 1.0);
+        // The audio worker meters continuously; the frame tick reads the gate.
+        session.feed_audio_level(0.0, 0.0);
+        assert_eq!(session.tick(1.0).word_progress, 0.0);
+        session.feed_audio_level(0.9, 1.0);
+        let progress = session.tick(1.0);
         assert!(progress.voice_active);
         assert!(progress.word_progress > 0.0);
+        assert!(
+            progress.level > 0.0,
+            "level should surface for the waveform"
+        );
     }
 
     #[test]
     fn word_tracking_ignores_the_clock() {
         let mut session = loaded("one two three four five six");
         session.start();
-        assert_eq!(session.tick(10.0, None, 0.0).character_offset, 0);
+        assert_eq!(session.tick(10.0).character_offset, 0);
     }
 
     #[test]
@@ -389,7 +423,7 @@ mod tests {
         let mut session = loaded("alpha beta gamma delta");
         session.set_mode(Mode::Classic);
         session.start();
-        session.tick(5.0, None, 0.0);
+        session.tick(5.0);
 
         let progress = session.jump_to_word(1);
         assert_eq!(progress.active_word, Some(1));
@@ -420,7 +454,7 @@ mod tests {
         let mut session = loaded("   ");
         session.set_mode(Mode::Classic);
         session.start();
-        assert!(!session.tick(100.0, None, 0.0).finished);
+        assert!(!session.tick(100.0).finished);
     }
 
     #[test]
@@ -429,7 +463,7 @@ mod tests {
         session.set_mode(Mode::Classic);
         session.start();
         session.set_words_per_second(4.0);
-        assert!(session.tick(1.0, None, 0.0).word_progress >= 4.0);
+        assert!(session.tick(1.0).word_progress >= 4.0);
     }
 
     #[test]

@@ -4,6 +4,10 @@
  * Every shape here mirrors a `#[derive(Serialize)]` struct in `src-tauri`.
  * Keeping them in one file means a rename on the Rust side breaks the build in
  * exactly one place instead of scattering `invoke("...")` string literals.
+ *
+ * Audio never crosses this boundary. The microphone is opened in Rust so the
+ * recogniser and the level meter share one input device, and the UI learns
+ * about both through `ProgressView`.
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -48,11 +52,27 @@ export interface ProgressView {
   wordProgress: number;
   activeWord: number | null;
   voiceActive: boolean;
+  /** Microphone level, 0..1, metered in Rust. */
+  level: number;
   finished: boolean;
+}
+
+export interface ModelStatus {
+  id: string;
+  label: string;
+  language: string;
+  installed: boolean;
+  downloadBytes: number;
+}
+
+export interface DownloadProgress {
+  received: number;
+  total: number;
 }
 
 export const EVENT_SCRIPT = "textream://script";
 export const EVENT_PROGRESS = "textream://progress";
+export const EVENT_DOWNLOAD = "textream://model-download";
 
 export const loadScript = (text: string) =>
   invoke<ScriptView>("load_script", { text });
@@ -62,28 +82,39 @@ export const setMode = (mode: Mode) => invoke<void>("set_mode", { mode });
 export const setSpeed = (wordsPerSecond: number) =>
   invoke<void>("set_speed", { wordsPerSecond });
 
-export const startSession = () => invoke<ProgressView>("start_session");
+/**
+ * Arms the session and opens the microphone if the mode needs one.
+ *
+ * Rejects when Word Tracking is selected and its model has not been
+ * downloaded, so the caller can offer the download rather than start a session
+ * that would silently never move.
+ */
+export const startSession = (modelId: string | null) =>
+  invoke<ProgressView>("start_session", { modelId });
+
 export const stopSession = () => invoke<ProgressView>("stop_session");
 export const isRunning = () => invoke<boolean>("is_running");
 
-export const feedTranscript = (transcript: string) =>
-  invoke<ProgressView>("feed_transcript", { transcript });
-
 /**
- * One call per animation frame. Pass `level` when a microphone is running so
- * the speech gate and the clock advance together — splitting them would double
- * the IPC traffic and let the gate be read a frame stale.
+ * Advances the clock for Classic and Voice-Activated.
  *
- * @param timestamp seconds from the same monotonic clock across frames.
+ * Word Tracking is driven by the audio worker instead, which pushes progress
+ * events as speech arrives; calling this in that mode is a harmless no-op that
+ * keeps the UI down to one animation loop.
  */
-export const tick = (
-  deltaSeconds: number,
-  level: number | null,
-  timestamp: number,
-) => invoke<ProgressView>("tick", { deltaSeconds, level, timestamp });
+export const tick = (deltaSeconds: number) =>
+  invoke<ProgressView>("tick", { deltaSeconds });
 
 export const jumpToWord = (index: number) =>
   invoke<ProgressView>("jump_to_word", { index });
+
+export const speechModels = () => invoke<ModelStatus[]>("speech_models");
+
+export const downloadSpeechModel = (id: string) =>
+  invoke<ModelStatus>("download_speech_model", { id });
+
+export const removeSpeechModel = (id: string) =>
+  invoke<ModelStatus>("remove_speech_model", { id });
 
 export const showOverlay = (geometry: Geometry) =>
   invoke<void>("show_overlay", { geometry });
