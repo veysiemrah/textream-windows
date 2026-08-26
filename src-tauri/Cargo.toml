@@ -19,7 +19,6 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 prompt-core.workspace = true
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
-tauri-plugin-opener = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2"
@@ -37,6 +36,9 @@ sherpa-rs = { version = "0.6", default-features = false, features = [
 ] }
 # Model downloads. Small, blocking, and already in the dependency graph.
 ureq = "2"
+# Verifies a downloaded model's bytes against its pinned checksum before it
+# ever reaches the ONNX runtime.
+sha2 = "0.10"
 
 # DWM backdrop effects for the frameless main window.
 window-vibrancy = "0.8"

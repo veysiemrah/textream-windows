@@ -22,7 +22,6 @@
     "core:window:allow-set-always-on-top",
     "core:window:allow-set-ignore-cursor-events",
     "core:webview:default",
-    "opener:default",
     "dialog:default",
     "dialog:allow-confirm",
     "notification:default"

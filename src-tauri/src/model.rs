@@ -9,6 +9,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 use crate::speech::{ModelFiles, ModelPaths};
 
@@ -22,8 +23,26 @@ pub struct SpeechModel {
     /// Hugging Face repository, `owner/name`.
     pub repo: &'static str,
     pub files: ModelFiles,
+    /// Expected SHA-256 of each file, pinned from the repository at
+    /// registry-authoring time.
+    pub hashes: ModelHashes,
     /// Approximate download size, for the confirmation the UI shows.
     pub download_bytes: u64,
+}
+
+/// SHA-256 digests (lowercase hex) matching `SpeechModel::files`.
+///
+/// The Kroko models share file names across languages (`encoder.onnx` and so
+/// on), so a hash can only be pinned per model, not per file name — a
+/// download landing on disk with the right name but the wrong bytes, whether
+/// from a corrupted transfer or a substituted source, must still be caught
+/// before it ever reaches the ONNX runtime.
+#[derive(Debug, Clone, Copy)]
+pub struct ModelHashes {
+    pub encoder: &'static str,
+    pub decoder: &'static str,
+    pub joiner: &'static str,
+    pub tokens: &'static str,
 }
 
 /// Models offered in the UI.
@@ -49,6 +68,12 @@ pub const MODELS: &[SpeechModel] = &[
             joiner: "joiner-epoch-99-avg-1.int8.onnx",
             tokens: "tokens.txt",
         },
+        hashes: ModelHashes {
+            encoder: "3810755ce7c3ab26b42a8bcf39d191308fa27fb0f53358823ba46141d03b7eb3",
+            decoder: "21e2a2acd961b3ac72f55be2f10f1a285e1b0b0ba010d7c0b6eab141411b163c",
+            joiner: "e085d73b593cf9b0707f370dbd656d58327d3fe36d80d849202ef81df02cb01e",
+            tokens: "49e3c2646595fd907228b3c6787069658f67b17377c60aeb8619c4551b2316fb",
+        },
         download_bytes: 43_600_000,
     },
     SpeechModel {
@@ -57,6 +82,12 @@ pub const MODELS: &[SpeechModel] = &[
         language: "en",
         repo: "csukuangfj/sherpa-onnx-streaming-zipformer-en-kroko-2025-08-06",
         files: KROKO_FILES,
+        hashes: ModelHashes {
+            encoder: "d4881c57449d581e0770fd53fa66c2fdc6cd167d92ece7c715e603defc96d9d4",
+            decoder: "455ba38466fce8d5a57e7db68a323b684079ca4d9e1dd93a740d9b2429aae3b1",
+            joiner: "d406f616736350e2a7df3e39398b78eb2fc1a2ca6973a19d3853fa3227e25b52",
+            tokens: "396dbeb5f4858875690716084f54e90d339679d0ba3e6b5b584f3d7589254d2d",
+        },
         download_bytes: 71_300_000,
     },
     SpeechModel {
@@ -65,6 +96,12 @@ pub const MODELS: &[SpeechModel] = &[
         language: "de",
         repo: "csukuangfj/sherpa-onnx-streaming-zipformer-de-kroko-2025-08-06",
         files: KROKO_FILES,
+        hashes: ModelHashes {
+            encoder: "6e83993d6967ec7a3498b055b7e85ace85b5d64d1b1e8773cb29a43a11f5edb5",
+            decoder: "94a29592b403c53fa2231b478637da1ab4abcef7f5e46e432098416a4a3ed562",
+            joiner: "28356bff070aea51ab1d725a3278e81d19f9300f860d3248a7014292264df15a",
+            tokens: "86e8370994ff2c01149ba8c4f8709aa93cdc18914b27a717e291e96faf39a6eb",
+        },
         download_bytes: 71_300_000,
     },
     SpeechModel {
@@ -73,6 +110,12 @@ pub const MODELS: &[SpeechModel] = &[
         language: "fr",
         repo: "csukuangfj/sherpa-onnx-streaming-zipformer-fr-kroko-2025-08-06",
         files: KROKO_FILES,
+        hashes: ModelHashes {
+            encoder: "e02facae1daf6f1f13da67ea3ace7c722516d0868d1768d78c0580bc22cc0c5b",
+            decoder: "6aed547570e3ab5afc05429a017cedd3a056c16df3baa5703f02461cefa25bac",
+            joiner: "a51eec759bcdcaae2614686fa2a8b57417b2d420dd55a5a5558b388d35a9b2b6",
+            tokens: "fedfb9c844bfb2bf14171f8184863e3d617b815a8667bdd9fc9a3149fde73298",
+        },
         download_bytes: 71_300_000,
     },
     SpeechModel {
@@ -81,6 +124,12 @@ pub const MODELS: &[SpeechModel] = &[
         language: "es",
         repo: "csukuangfj/sherpa-onnx-streaming-zipformer-es-kroko-2025-08-06",
         files: KROKO_FILES,
+        hashes: ModelHashes {
+            encoder: "2d9f5ef87d1a5257f8a6687e21501c56f3aa2fcbfcfab9364dcc4ce4e06ae81b",
+            decoder: "d4ce176b94b25f7acc88717bc3f704fcf5d6e131aaac2e0cabab3885541181ee",
+            joiner: "dae35df88d676e320fcdb99217328e66dcf722bf11b0f2459e14ddb5b982ded5",
+            tokens: "1be5e0a58e05d06d327df4c6b7b5e4f8aba01da6981eb016fcaceafc6a56680f",
+        },
         download_bytes: 156_200_000,
     },
     SpeechModel {
@@ -94,6 +143,12 @@ pub const MODELS: &[SpeechModel] = &[
             joiner: "joiner-epoch-20-avg-1-chunk-16-left-128.int8.onnx",
             tokens: "tokens.txt",
         },
+        hashes: ModelHashes {
+            encoder: "d6380c74c75aaf37a739061a9197440fc5ca3f73ee339e588268eff2e9d3bf84",
+            decoder: "93f0df50c2834fe225bbabd664d59fc2488b15736fbc6acaabddec3188dea9b4",
+            joiner: "7fa442b8b35b1ab217dbceadb57a7da5388ee445c6c722eab576a57071e0dcea",
+            tokens: "6722bd1585f46f84456b29c3550a343a3cc375b971645773c02ed8e0b4e2405c",
+        },
         download_bytes: 76_500_000,
     },
     SpeechModel {
@@ -106,6 +161,12 @@ pub const MODELS: &[SpeechModel] = &[
             decoder: "decoder-epoch-75-avg-11-chunk-16-left-128.onnx",
             joiner: "joiner-epoch-75-avg-11-chunk-16-left-128.int8.onnx",
             tokens: "tokens.txt",
+        },
+        hashes: ModelHashes {
+            encoder: "f9001ed7a9e46d0294438c1a30cd7c72d1cc4bdd4e7880edbcda36f67081e32e",
+            decoder: "7ebc63f34b21c8efb4a41a5a2eee7fe1448829ce0230ecc5369e67fc14d90d48",
+            joiner: "db88e3172323551abaa99b91b18fb422a27ea4a834fd0db10389f9478816f917",
+            tokens: "784f24950f6bcce1b0021035632dd60fd4617ecd8ca0581ab57d7b39d77ba5ab",
         },
         download_bytes: 338_700_000,
     },
@@ -189,12 +250,18 @@ pub fn download(
         model.files.joiner,
         model.files.tokens,
     ];
+    let expected_hashes = [
+        model.hashes.encoder,
+        model.hashes.decoder,
+        model.hashes.joiner,
+        model.hashes.tokens,
+    ];
 
     let total = model.download_bytes;
     let mut received = 0u64;
     on_progress(DownloadProgress { received, total });
 
-    for name in names {
+    for (name, expected) in names.into_iter().zip(expected_hashes) {
         let destination = directory.join(name);
         if destination.is_file() {
             continue;
@@ -233,6 +300,19 @@ pub fn download(
 
         file.flush().map_err(|error| error.to_string())?;
         drop(file);
+
+        // A completed HTTP response is not proof of correct bytes — a
+        // truncated read that still hits EOF, a corrupted transfer, or a
+        // substituted file at the source would otherwise be handed straight
+        // to the ONNX runtime with nothing having checked it first.
+        let actual = hash_file(&partial).map_err(|error| error.to_string())?;
+        if !actual.eq_ignore_ascii_case(expected) {
+            let _ = fs::remove_file(&partial);
+            return Err(format!(
+                "downloaded {name} does not match the expected checksum (expected {expected}, got {actual}) -- refusing to install it"
+            ));
+        }
+
         fs::rename(&partial, &destination).map_err(|error| error.to_string())?;
     }
 
@@ -241,6 +321,21 @@ pub fn download(
         total: received.max(total),
     });
     Ok(())
+}
+
+/// SHA-256 of a file's contents, as lowercase hex.
+fn hash_file(path: &Path) -> std::io::Result<String> {
+    let mut file = File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 128 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 /// Deletes a downloaded model.
@@ -318,7 +413,41 @@ mod tests {
             ] {
                 assert!(!name.is_empty(), "{} is missing a file name", model.id);
             }
+            for hash in [
+                model.hashes.encoder,
+                model.hashes.decoder,
+                model.hashes.joiner,
+                model.hashes.tokens,
+            ] {
+                assert_eq!(
+                    hash.len(),
+                    64,
+                    "{} has a hash that is not 64 hex characters",
+                    model.id
+                );
+                assert!(
+                    hash.chars().all(|c| c.is_ascii_hexdigit()),
+                    "{} has a non-hex character in a hash",
+                    model.id
+                );
+            }
         }
+    }
+
+    #[test]
+    fn hash_file_matches_a_known_sha256() {
+        let root = std::env::temp_dir().join("textream-model-hash-test");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("hello.txt");
+        fs::write(&path, b"hello world").unwrap();
+
+        // Known SHA-256 of the literal bytes "hello world".
+        assert_eq!(
+            hash_file(&path).unwrap(),
+            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+        );
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
