@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="src-tauri/icons/128x128@2x.png" width="96" height="96" alt="Textream icon">
+</p>
+
 <h1 align="center">Textream for Windows</h1>
 
 <p align="center">
