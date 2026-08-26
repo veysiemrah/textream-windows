@@ -57,6 +57,48 @@ export interface ProgressView {
   finished: boolean;
 }
 
+export type FontFamily = "sans" | "serif" | "mono" | "dyslexic";
+export type FontSize = "xs" | "sm" | "lg" | "xl";
+export type ColorPreset =
+  | "white"
+  | "yellow"
+  | "green"
+  | "blue"
+  | "pink"
+  | "orange";
+
+export interface Appearance {
+  fontFamily: FontFamily;
+  fontSize: FontSize;
+  highlight: ColorPreset;
+  cue: ColorPreset;
+  /** 0 (fully clear) to 1 (solid). */
+  opacity: number;
+}
+
+/** Appearance resolved to values the overlay renders directly. */
+export interface AppearanceView {
+  fontStack: string;
+  fontSizePx: number;
+  highlight: string;
+  cue: string;
+  opacity: number;
+}
+
+export interface Settings {
+  mode: Mode;
+  wordsPerSecond: number;
+  placement: Placement;
+  target: Target;
+  width: number;
+  height: number;
+  hideFromCapture: boolean;
+  clickThrough: boolean;
+  appearance: Appearance;
+  modelId: string | null;
+  script: string;
+}
+
 export interface ModelStatus {
   id: string;
   label: string;
@@ -73,6 +115,19 @@ export interface DownloadProgress {
 export const EVENT_SCRIPT = "textream://script";
 export const EVENT_PROGRESS = "textream://progress";
 export const EVENT_DOWNLOAD = "textream://model-download";
+export const EVENT_APPEARANCE = "textream://appearance";
+
+export const loadSettings = () => invoke<Settings>("load_settings");
+
+/**
+ * Persists settings and pushes appearance to the overlay.
+ *
+ * Returns the stored value, which is the sanitised one — out-of-range numbers
+ * are clamped in Rust, so the caller should adopt what comes back rather than
+ * assume what it sent was kept.
+ */
+export const saveSettings = (settings: Settings) =>
+  invoke<Settings>("save_settings", { settings });
 
 export const loadScript = (text: string) =>
   invoke<ScriptView>("load_script", { text });

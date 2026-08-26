@@ -10,6 +10,7 @@ mod audio;
 mod model;
 mod overlay;
 mod session;
+mod settings;
 mod speech;
 mod window_effects;
 
@@ -24,6 +25,7 @@ use audio::AudioEngine;
 use model::{DownloadProgress, ModelStatus};
 use overlay::Geometry;
 use session::{Mode, ProgressView, ScriptView, SessionState};
+use settings::Settings;
 use speech::Recognizer;
 
 /// Label of the overlay window, as declared in `tauri.conf.json`.
@@ -32,6 +34,7 @@ const OVERLAY: &str = "overlay";
 const EVENT_SCRIPT: &str = "textream://script";
 const EVENT_PROGRESS: &str = "textream://progress";
 const EVENT_DOWNLOAD: &str = "textream://model-download";
+const EVENT_APPEARANCE: &str = "textream://appearance";
 
 /// The running capture session, if any.
 #[derive(Default)]
@@ -175,6 +178,24 @@ fn jump_to_offset(
 ) -> ProgressView {
     let progress = state.0.lock().unwrap().jump_to_offset(offset);
     broadcast(&app, progress)
+}
+
+#[tauri::command]
+fn load_settings(app: AppHandle) -> Result<Settings, String> {
+    let settings = settings::load(&data_root(&app)?);
+    // Push appearance straight away: the overlay may already be listening, and
+    // it must never render one frame in last session's colours.
+    let _ = app.emit_to(OVERLAY, EVENT_APPEARANCE, settings.appearance.view());
+    Ok(settings)
+}
+
+/// Persists settings and pushes the visual half to the overlay.
+#[tauri::command]
+fn save_settings(app: AppHandle, settings: Settings) -> Result<Settings, String> {
+    let settings = settings.sanitised();
+    settings::save(&data_root(&app)?, &settings)?;
+    let _ = app.emit_to(OVERLAY, EVENT_APPEARANCE, settings.appearance.view());
+    Ok(settings)
 }
 
 #[tauri::command]
@@ -324,6 +345,8 @@ pub fn run() {
             tick,
             jump_to_word,
             jump_to_offset,
+            load_settings,
+            save_settings,
             speech_models,
             download_speech_model,
             remove_speech_model,

@@ -3,11 +3,14 @@
   import { listen } from "@tauri-apps/api/event";
   import * as api from "./lib/api";
   import type {
+    ColorPreset,
     DownloadProgress,
+    FontFamily,
+    FontSize,
     Geometry,
     ModelStatus,
     Mode,
-    Placement,
+    Settings,
   } from "./lib/api";
 
   const SAMPLE = `Welcome back to the show. [smile at camera]
@@ -16,14 +19,45 @@ Today we are shipping something I have wanted for a long time.
 
 [pause] Let me show you how it works.`;
 
-  let script = $state(SAMPLE);
-  let mode = $state<Mode>("classic");
-  let wordsPerSecond = $state(2.0);
-  let placement = $state<Placement>("topCenter");
-  let width = $state(420);
-  let height = $state(160);
-  let hideFromCapture = $state(true);
-  let clickThrough = $state(true);
+  /** Mirrors `Settings::default()` in Rust, for the frames before load. */
+  const FALLBACK: Settings = {
+    mode: "classic",
+    wordsPerSecond: 2.0,
+    placement: "topCenter",
+    target: "followCursor",
+    width: 420,
+    height: 160,
+    hideFromCapture: true,
+    clickThrough: true,
+    appearance: {
+      fontFamily: "sans",
+      fontSize: "lg",
+      highlight: "yellow",
+      cue: "orange",
+      opacity: 0.92,
+    },
+    modelId: null,
+    script: "",
+  };
+
+  const FONTS: { id: FontFamily; label: string }[] = [
+    { id: "sans", label: "Sans" },
+    { id: "serif", label: "Serif" },
+    { id: "mono", label: "Mono" },
+    { id: "dyslexic", label: "Dyslexic" },
+  ];
+  const SIZES: FontSize[] = ["xs", "sm", "lg", "xl"];
+  const COLORS: { id: ColorPreset; css: string }[] = [
+    { id: "white", css: "#ffffff" },
+    { id: "yellow", css: "#ffd60a" },
+    { id: "green", css: "#33d64a" },
+    { id: "blue", css: "#4f8cff" },
+    { id: "pink", css: "#ff6191" },
+    { id: "orange", css: "#ff9e0a" },
+  ];
+
+  let settings = $state<Settings>({ ...FALLBACK, script: SAMPLE });
+  let loaded = $state(false);
 
   let running = $state(false);
   let status = $state("");
@@ -33,27 +67,31 @@ Today we are shipping something I have wanted for a long time.
   let wordProgress = $state(0);
 
   let models = $state<ModelStatus[]>([]);
-  let modelId = $state<string | null>(null);
   let downloading = $state(false);
   let downloadPercent = $state(0);
 
   let frame = 0;
   let lastFrameTime = 0;
+  let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
   const selectedModel = $derived(
-    models.find((candidate) => candidate.id === modelId) ?? models[0] ?? null,
+    models.find((candidate) => candidate.id === settings.modelId) ??
+      models[0] ??
+      null,
   );
   const speechReady = $derived(selectedModel?.installed === true);
-  const needsMicrophone = $derived(mode !== "classic");
+  const needsMicrophone = $derived(settings.mode !== "classic");
   const wordCount = $derived(
-    script.trim() === "" ? 0 : script.trim().split(/\s+/).length,
+    settings.script.trim() === ""
+      ? 0
+      : settings.script.trim().split(/\s+/).length,
   );
 
   const geometry = (): Geometry => ({
-    placement,
-    target: "followCursor",
-    width,
-    height,
+    placement: settings.placement,
+    target: settings.target,
+    width: settings.width,
+    height: settings.height,
   });
 
   function say(message: string, kind: "info" | "warn" = "info") {
@@ -63,26 +101,43 @@ Today we are shipping something I have wanted for a long time.
 
   const megabytes = (bytes: number) => `${Math.round(bytes / 1_000_000)} MB`;
 
+  /**
+   * Writes settings after a short pause.
+   *
+   * Every slider drag fires an input event, and each one would otherwise be a
+   * disk write. Debouncing also means the value that lands is the one the user
+   * settled on, not the last frame of the drag.
+   */
+  function persist() {
+    if (!loaded) return;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      void api.saveSettings($state.snapshot(settings));
+    }, 400);
+  }
+
   onMount(() => {
-    void refreshModels();
-    const unlisten = listen<DownloadProgress>(
-      api.EVENT_DOWNLOAD,
-      (event) => {
-        const { received, total } = event.payload;
-        downloadPercent = total > 0 ? (received / total) * 100 : 0;
-      },
-    );
+    void restore();
+    const unlisten = listen<DownloadProgress>(api.EVENT_DOWNLOAD, (event) => {
+      const { received, total } = event.payload;
+      downloadPercent = total > 0 ? (received / total) * 100 : 0;
+    });
     return () => {
       void unlisten.then((off) => off());
     };
   });
 
-  async function refreshModels() {
+  async function restore() {
     try {
+      const stored = await api.loadSettings();
+      // A first run has no script; the sample is more use than a blank page.
+      settings = { ...stored, script: stored.script || SAMPLE };
       models = await api.speechModels();
-      modelId ??= models[0]?.id ?? null;
+      settings.modelId ??= models[0]?.id ?? null;
     } catch (error) {
-      say(`Could not read the speech models: ${error}`, "warn");
+      say(`Could not read your settings: ${error}`, "warn");
+    } finally {
+      loaded = true;
     }
   }
 
@@ -103,29 +158,31 @@ Today we are shipping something I have wanted for a long time.
   }
 
   async function start() {
-    if (script.trim() === "") {
+    if (settings.script.trim() === "") {
       say("Nothing to read — paste a script first.", "warn");
       return;
     }
 
-    await api.loadScript(script);
-    await api.setMode(mode);
-    await api.setSpeed(wordsPerSecond);
+    await api.loadScript(settings.script);
+    await api.setMode(settings.mode);
+    await api.setSpeed(settings.wordsPerSecond);
 
     // Arm the session before showing anything: it opens the microphone and
     // loads the model, either of which can fail, and an overlay that appears
     // and then never moves is worse than one that never appeared.
     try {
-      await api.startSession(mode === "wordTracking" ? modelId : null);
+      await api.startSession(
+        settings.mode === "wordTracking" ? settings.modelId : null,
+      );
     } catch (error) {
       say(String(error), "warn");
       return;
     }
 
     await api.showOverlay(geometry());
-    await api.setClickThrough(clickThrough);
-    const accepted = await api.setHideFromCapture(hideFromCapture);
-    if (hideFromCapture && !accepted) {
+    await api.setClickThrough(settings.clickThrough);
+    const accepted = await api.setHideFromCapture(settings.hideFromCapture);
+    if (settings.hideFromCapture && !accepted) {
       say(
         "This build of Windows cannot hide the overlay from screen capture (needs 10 2004 or newer).",
         "warn",
@@ -166,20 +223,34 @@ Today we are shipping something I have wanted for a long time.
   }
 
   async function pushGeometry() {
+    persist();
     if (running) await api.setOverlayGeometry(geometry());
   }
 
   async function pushSpeed() {
-    await api.setSpeed(wordsPerSecond);
+    persist();
+    await api.setSpeed(settings.wordsPerSecond);
   }
 
   async function pushMode(next: Mode) {
-    mode = next;
+    settings.mode = next;
+    persist();
     if (running) await api.setMode(next);
+  }
+
+  async function pushClickThrough() {
+    persist();
+    if (running) await api.setClickThrough(settings.clickThrough);
+  }
+
+  async function pushHideFromCapture() {
+    persist();
+    if (running) await api.setHideFromCapture(settings.hideFromCapture);
   }
 
   onDestroy(() => {
     cancelAnimationFrame(frame);
+    clearTimeout(saveTimer);
   });
 </script>
 
@@ -191,13 +262,15 @@ Today we are shipping something I have wanted for a long time.
 
   <section class="editor">
     <textarea
-      bind:value={script}
+      bind:value={settings.script}
+      oninput={persist}
       spellcheck="false"
       placeholder="Paste your script. Put stage directions in [brackets] — they are shown but never waited for."
     ></textarea>
     <div class="meta">
       <span>{wordCount} words</span>
-      <span>~{(wordCount / wordsPerSecond / 60).toFixed(1)} min at this pace</span
+      <span
+        >~{(wordCount / settings.wordsPerSecond / 60).toFixed(1)} min at this pace</span
       >
     </div>
   </section>
@@ -207,7 +280,7 @@ Today we are shipping something I have wanted for a long time.
       <legend>Mode</legend>
       <div class="segmented">
         <button
-          class:active={mode === "wordTracking"}
+          class:active={settings.mode === "wordTracking"}
           disabled={!speechReady}
           title={speechReady
             ? "Highlights each word as you say it"
@@ -218,12 +291,12 @@ Today we are shipping something I have wanted for a long time.
           {#if !speechReady}<em>needs model</em>{/if}
         </button>
         <button
-          class:active={mode === "classic"}
+          class:active={settings.mode === "classic"}
           title="Scrolls at a constant speed. No microphone."
           onclick={() => pushMode("classic")}>Classic</button
         >
         <button
-          class:active={mode === "voiceActivated"}
+          class:active={settings.mode === "voiceActivated"}
           title="Scrolls while you speak, pauses in silence."
           onclick={() => pushMode("voiceActivated")}>Voice-Activated</button
         >
@@ -236,7 +309,11 @@ Today we are shipping something I have wanted for a long time.
         <div class="model">
           <div class="model-name">
             <strong>{selectedModel.label}</strong>
-            <span class="tag">{selectedModel.installed ? "installed" : megabytes(selectedModel.downloadBytes)}</span>
+            <span class="tag"
+              >{selectedModel.installed
+                ? "installed"
+                : megabytes(selectedModel.downloadBytes)}</span
+            >
           </div>
           {#if !selectedModel.installed}
             <button class="ghost" disabled={downloading} onclick={downloadModel}>
@@ -257,18 +334,18 @@ Today we are shipping something I have wanted for a long time.
     </fieldset>
 
     <fieldset>
-      <legend>Pace — {wordsPerSecond.toFixed(1)} words/s</legend>
+      <legend>Pace — {settings.wordsPerSecond.toFixed(1)} words/s</legend>
       <input
         type="range"
         min="0.5"
         max="8"
         step="0.1"
-        bind:value={wordsPerSecond}
+        bind:value={settings.wordsPerSecond}
         oninput={pushSpeed}
-        disabled={mode === "wordTracking"}
+        disabled={settings.mode === "wordTracking"}
       />
       <p class="hint">
-        {mode === "wordTracking"
+        {settings.mode === "wordTracking"
           ? "Word Tracking follows your voice, so pace is not used."
           : "How fast the script advances."}
       </p>
@@ -276,7 +353,7 @@ Today we are shipping something I have wanted for a long time.
 
     <fieldset>
       <legend>Placement</legend>
-      <select bind:value={placement} onchange={pushGeometry}>
+      <select bind:value={settings.placement} onchange={pushGeometry}>
         <option value="topCenter">Top centre — near the webcam</option>
         <option value="floating">Floating window</option>
         <option value="fullscreen">Fullscreen on this display</option>
@@ -290,37 +367,129 @@ Today we are shipping something I have wanted for a long time.
 
     <fieldset class="split">
       <label>
-        Width — {width}px
+        Width — {settings.width}px
         <input
           type="range"
           min="280"
           max="500"
-          bind:value={width}
+          bind:value={settings.width}
           oninput={pushGeometry}
         />
       </label>
       <label>
-        Height — {height}px
+        Height — {settings.height}px
         <input
           type="range"
           min="100"
           max="400"
-          bind:value={height}
+          bind:value={settings.height}
           oninput={pushGeometry}
         />
       </label>
     </fieldset>
 
     <fieldset>
+      <legend>Typeface</legend>
+      <div class="segmented">
+        {#each FONTS as font (font.id)}
+          <button
+            class:active={settings.appearance.fontFamily === font.id}
+            onclick={() => {
+              settings.appearance.fontFamily = font.id;
+              persist();
+            }}>{font.label}</button
+          >
+        {/each}
+      </div>
+      <div class="segmented sizes">
+        {#each SIZES as size (size)}
+          <button
+            class:active={settings.appearance.fontSize === size}
+            onclick={() => {
+              settings.appearance.fontSize = size;
+              persist();
+            }}>{size.toUpperCase()}</button
+          >
+        {/each}
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Colour</legend>
+      <div class="swatch-row">
+        <span class="swatch-label">Spoken word</span>
+        {#each COLORS as color (color.id)}
+          <button
+            class="swatch"
+            class:active={settings.appearance.highlight === color.id}
+            style="background:{color.css}"
+            title={color.id}
+            aria-label="Highlight {color.id}"
+            onclick={() => {
+              settings.appearance.highlight = color.id;
+              persist();
+            }}
+          ></button>
+        {/each}
+      </div>
+      <div class="swatch-row">
+        <span class="swatch-label">Cues</span>
+        {#each COLORS as color (color.id)}
+          <button
+            class="swatch"
+            class:active={settings.appearance.cue === color.id}
+            style="background:{color.css}"
+            title={color.id}
+            aria-label="Cue {color.id}"
+            onclick={() => {
+              settings.appearance.cue = color.id;
+              persist();
+            }}
+          ></button>
+        {/each}
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>
+        Background — {(settings.appearance.opacity * 100).toFixed(0)}%
+      </legend>
+      <input
+        type="range"
+        min="0"
+        max="1"
+        step="0.01"
+        bind:value={settings.appearance.opacity}
+        oninput={persist}
+      />
+      <p class="hint">
+        Lower is more see-through. Fully clear leaves only the text over your
+        screen.
+      </p>
+    </fieldset>
+
+    <fieldset>
       <legend>Overlay behaviour</legend>
       <label class="check">
-        <input type="checkbox" bind:checked={hideFromCapture} />
+        <input
+          type="checkbox"
+          bind:checked={settings.hideFromCapture}
+          onchange={pushHideFromCapture}
+        />
         Hide from screen share and recordings
       </label>
       <label class="check">
-        <input type="checkbox" bind:checked={clickThrough} />
+        <input
+          type="checkbox"
+          bind:checked={settings.clickThrough}
+          onchange={pushClickThrough}
+        />
         Let clicks pass through to the app behind
       </label>
+      <p class="hint">
+        Clicks cannot both pass through and land on the overlay. Turn this off
+        to click a word and jump the prompter there.
+      </p>
     </fieldset>
   </section>
 
@@ -333,8 +502,9 @@ Today we are shipping something I have wanted for a long time.
         <div class="live">
           {#if needsMicrophone}
             <span class="dot" class:on={voiceActive}></span>
-            <div class="wave"><span style="width:{Math.min(100, level * 400)}%"
-              ></span></div>
+            <div class="wave">
+              <span style="width:{Math.min(100, level * 400)}%"></span>
+            </div>
           {/if}
           <span class="counter">word {Math.floor(wordProgress)}</span>
         </div>
@@ -391,7 +561,7 @@ Today we are shipping something I have wanted for a long time.
     flex-direction: column;
     gap: 6px;
     flex: 1;
-    min-height: 160px;
+    min-height: 150px;
   }
   textarea {
     flex: 1;
@@ -451,6 +621,9 @@ Today we are shipping something I have wanted for a long time.
     border-radius: 8px;
     padding: 4px;
   }
+  .segmented.sizes {
+    margin-top: 6px;
+  }
   .segmented button {
     flex: 1;
     padding: 7px 6px;
@@ -480,6 +653,30 @@ Today we are shipping something I have wanted for a long time.
     letter-spacing: 0.08em;
     text-transform: uppercase;
     opacity: 0.7;
+  }
+
+  .swatch-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 0;
+  }
+  .swatch-label {
+    width: 88px;
+    color: #8b9098;
+    font-size: 12px;
+  }
+  .swatch {
+    width: 20px;
+    height: 20px;
+    border: 2px solid transparent;
+    border-radius: 50%;
+    padding: 0;
+    cursor: pointer;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+  }
+  .swatch.active {
+    border-color: #e8eaed;
   }
 
   .model {

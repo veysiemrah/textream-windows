@@ -51,7 +51,7 @@ What carries over is the product and the algorithms, reimplemented in Rust.
 | Privacy | fully on-device | same, deliberately |
 | Overlay home | Dynamic Island under the notch | pill on the top edge — see below |
 | Speech engine | Apple's recogniser, dozens of languages | sherpa-onnx, English so far |
-| Extras | Sidecar, PowerPoint import, remote view, mirror output | not yet — see the roadmap |
+| Extras | Sidecar, PowerPoint import, remote view, mirror output | out of scope — see below |
 
 ## Design decisions
 
@@ -187,12 +187,26 @@ cargo test --workspace
 - [x] System tray
 - [x] Classic and Voice-Activated modes end to end
 - [x] On-device streaming speech recognition — Word Tracking works
-- [ ] More speech languages in the model registry
+- [ ] Settings that persist across launches
+- [ ] Font, size, colour and opacity
+- [ ] Pause, resume, and mute from the overlay
 - [ ] Tap a word to jump; scroll to catch up
-- [ ] Remote connection: local HTTP + WebSocket view with QR pairing
-- [ ] `.textream` files, PowerPoint notes import, multi-page scripts
-- [ ] Font, size and colour settings; mirror output for prompter rigs
+- [ ] `.textream` files
 - [ ] Global shortcuts
+- [ ] Update check
+- [ ] More speech languages in the model registry
+
+### Deliberately out of scope
+
+The macOS app has years of features this port is not chasing. Skipped on
+purpose, not forgotten:
+
+- **Remote connection** — the browser view with QR pairing. If you want your
+  script on a phone, the original does it well.
+- **PowerPoint notes import**, multi-page scripts, mirror output for prompter
+  rigs, and Sidecar-style external display modes.
+
+The goal here is a complete, solid teleprompter on Windows, not feature parity.
 
 ## Credits
 
@@ -208,6 +222,11 @@ approach to word tracking are all his design.
 Speech recognition uses [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) by
 the k2-fsa team, with streaming models published by
 [csukuangfj](https://huggingface.co/csukuangfj).
+
+The dyslexia-friendly typeface is
+[OpenDyslexic](https://opendyslexic.org) by Abbie Gonzalez, bundled under the
+SIL Open Font License — see
+[the licence](src/assets/fonts/OpenDyslexic-OFL.txt).
 
 ## License
 

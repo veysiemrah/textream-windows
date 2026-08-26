@@ -2,17 +2,33 @@
   import { onMount } from "svelte";
   import { listen } from "@tauri-apps/api/event";
   import {
+    EVENT_APPEARANCE,
     EVENT_PROGRESS,
     EVENT_SCRIPT,
+    jumpToWord,
+    type AppearanceView,
     type ProgressView,
     type ScriptView,
   } from "./lib/api";
 
   let script = $state<ScriptView | null>(null);
   let progress = $state<ProgressView | null>(null);
+  let appearance = $state<AppearanceView | null>(null);
   let viewport: HTMLDivElement | undefined = $state();
 
   const activeWord = $derived(progress?.activeWord ?? -1);
+
+  const style = $derived(
+    appearance
+      ? [
+          `--font-stack:${appearance.fontStack}`,
+          `--font-size:${appearance.fontSizePx}px`,
+          `--highlight:${appearance.highlight}`,
+          `--cue:${appearance.cue}`,
+          `--bg-opacity:${appearance.opacity}`,
+        ].join(";")
+      : "",
+  );
 
   onMount(() => {
     const unlisten = Promise.all([
@@ -22,6 +38,9 @@
       }),
       listen<ProgressView>(EVENT_PROGRESS, (event) => {
         progress = event.payload;
+      }),
+      listen<AppearanceView>(EVENT_APPEARANCE, (event) => {
+        appearance = event.payload;
       }),
     ]);
     return () => {
@@ -46,16 +65,19 @@
   });
 </script>
 
-<div class="pill" dir={script?.direction ?? "ltr"}>
+<div class="pill" dir={script?.direction ?? "ltr"} {style}>
   {#if script && script.words.length > 0}
     <div class="viewport" bind:this={viewport}>
       <p class="words">
-        {#each script.words as word (word.id)}<span
+        {#each script.words as word (word.id)}<button
+            type="button"
             data-word={word.id}
             class="word"
             class:read={word.id < activeWord}
             class:active={word.id === activeWord}
-            class:cue={word.isAnnotation}>{word.text}</span
+            class:cue={word.isAnnotation}
+            title="Jump here"
+            onclick={() => jumpToWord(word.id)}>{word.text}</button
           >{" "}{/each}
       </p>
     </div>
@@ -72,6 +94,15 @@
 </div>
 
 <style>
+  /* Bundled so the dyslexia-friendly face works on a machine that has never
+     installed it — the whole point of offering it. */
+  @font-face {
+    font-family: "OpenDyslexic Three";
+    src: url("./assets/fonts/OpenDyslexic3-Regular.ttf") format("truetype");
+    font-weight: 400;
+    font-display: swap;
+  }
+
   :global(html),
   :global(body) {
     margin: 0;
@@ -83,13 +114,20 @@
   }
 
   .pill {
+    /* Defaults for the frame or two before the first appearance event. */
+    --font-stack: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+    --font-size: 20px;
+    --highlight: #ffd60a;
+    --cue: #ff9e0a;
+    --bg-opacity: 0.92;
+
     display: flex;
     flex-direction: column;
     box-sizing: border-box;
     height: 100vh;
     padding: 14px 20px 10px;
     border-radius: 18px;
-    background: rgba(10, 11, 13, 0.92);
+    background: rgba(10, 11, 13, var(--bg-opacity));
     /* Mica and Acrylic are unavailable to a transparent WebView2 surface, so
        the frosted look is done in CSS against whatever shows through. */
     backdrop-filter: blur(20px) saturate(140%);
@@ -97,10 +135,7 @@
       0 8px 32px rgba(0, 0, 0, 0.45),
       inset 0 0 0 1px rgba(255, 255, 255, 0.06);
     font:
-      600 20px/1.65 "Segoe UI Variable Display",
-      "Segoe UI",
-      system-ui,
-      sans-serif;
+      600 var(--font-size) / 1.65 var(--font-stack);
   }
 
   .viewport {
@@ -124,6 +159,16 @@
   }
 
   .word {
+    /* A button for the keyboard and for screen readers, styled back down to
+       text — tapping a word to jump has to hit something focusable. */
+    display: inline;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
     transition:
       color 140ms ease,
       opacity 140ms ease;
@@ -132,17 +177,18 @@
     color: rgba(255, 255, 255, 0.62);
   }
   .word.active {
-    color: #ffd60a;
+    color: var(--highlight);
   }
   .word.cue {
     /* Cues are shown — the presenter still needs the direction — but never
        highlighted, so they read as instruction rather than as script. */
-    color: rgba(255, 158, 10, 0.55);
+    color: var(--cue);
+    opacity: 0.55;
     font-style: italic;
     font-weight: 500;
   }
   .word.cue.active {
-    color: rgba(255, 158, 10, 0.75);
+    opacity: 0.75;
   }
 
   .rail {
@@ -156,7 +202,7 @@
   .rail span {
     display: block;
     height: 100%;
-    background: #ffd60a;
+    background: var(--highlight);
     transition: width 120ms linear;
   }
 
