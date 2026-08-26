@@ -80,6 +80,7 @@ Today we are shipping something I have wanted for a long time.
   let panelOpen = $state(false);
 
   let running = $state(false);
+  let transitioning = $state(false);
   let paused = $state(false);
   let muted = $state(false);
   let status = $state("");
@@ -247,8 +248,19 @@ Today we are shipping something I have wanted for a long time.
   }
 
   async function toggleRun() {
-    if (running) await stop();
-    else await start();
+    // start() and stop() both open or release a microphone and a model, which
+    // take real time to settle. Without this guard, a second click before the
+    // first finishes would race two attempts against the same device — the
+    // button is also disabled while this is true, but a guard here covers
+    // activation via the keyboard's repeat-on-hold too.
+    if (transitioning) return;
+    transitioning = true;
+    try {
+      if (running) await stop();
+      else await start();
+    } finally {
+      transitioning = false;
+    }
   }
 
   async function start() {
@@ -670,6 +682,7 @@ Today we are shipping something I have wanted for a long time.
       {paused}
       {level}
       listening={needsMicrophone && !muted}
+      disabled={transitioning}
       onclick={toggleRun}
     />
 

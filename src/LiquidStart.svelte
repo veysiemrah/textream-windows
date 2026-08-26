@@ -17,10 +17,19 @@
     /** Microphone level, 0..1. Ignored when the mode has no microphone. */
     level: number;
     listening: boolean;
+    /**
+     * True while a start or stop is already in flight.
+     *
+     * Both open a microphone and a model that take real time to settle, so a
+     * second click before the first finishes would race two attempts against
+     * the same device — this makes the button inert until one completes.
+     */
+    disabled?: boolean;
     onclick: () => void;
   }
 
-  let { running, paused, level, listening, onclick }: Props = $props();
+  let { running, paused, level, listening, disabled = false, onclick }: Props =
+    $props();
 
   let swell = $state(0);
   let frame = 0;
@@ -52,6 +61,7 @@
   class:paused
   class:calm
   style="--swell:{swell}"
+  {disabled}
   {onclick}
   aria-label={running ? "Stop the prompter" : "Start the prompter"}
 >
@@ -75,6 +85,10 @@
     color: var(--ink);
     cursor: pointer;
     isolation: isolate;
+  }
+  .liquid:disabled {
+    cursor: default;
+    opacity: 0.7;
   }
   .liquid:focus-visible {
     outline: 2px solid var(--accent);
