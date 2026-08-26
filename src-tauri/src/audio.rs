@@ -14,6 +14,7 @@
 //! * The **worker thread** does the expensive part — metering, decoding, and
 //!   talking to the session behind its mutex.
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
@@ -116,6 +117,13 @@ impl AudioEngine {
             config.sample_format()
         );
 
+        // Best-effort: a device dropping out mid-session is worth a trace in
+        // the crash log, but failing to resolve that log's own path is not a
+        // reason to refuse to open the microphone at all.
+        let log_path = crate::data_root(&app)
+            .ok()
+            .map(|root| root.join("textream.log"));
+
         let stop = Arc::new(AtomicBool::new(false));
         let muted = Arc::new(AtomicBool::new(false));
 
@@ -155,6 +163,7 @@ impl AudioEngine {
                         channels,
                         sender,
                         diagnostics,
+                        log_path,
                     );
                     let Ok(stream) = stream else { return };
                     if stream.play().is_err() {
@@ -216,8 +225,16 @@ fn build_stream(
     channels: usize,
     sender: SyncSender<Vec<f32>>,
     diagnostics: Arc<Diagnostics>,
+    log_path: Option<PathBuf>,
 ) -> Result<cpal::Stream, String> {
-    let on_error = |error| eprintln!("microphone stream error: {error}");
+    // A stream error is a device dropping out mid-session — driver crash,
+    // unplugged cable — the kind of thing a presenter needs to have a trace
+    // of afterwards, not just a Follow mode that quietly stopped moving.
+    let on_error = move |error| {
+        if let Some(path) = &log_path {
+            crate::diagnostics::append(path, &format!("microphone stream error: {error}"));
+        }
+    };
 
     let stream = match format {
         SampleFormat::F32 => device.build_input_stream(

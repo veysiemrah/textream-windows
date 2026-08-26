@@ -8,6 +8,7 @@
 
 mod audio;
 mod backdrop;
+mod diagnostics;
 mod document;
 mod model;
 mod overlay;
@@ -53,7 +54,7 @@ fn overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
 }
 
 /// Root directory for downloaded models.
-fn data_root(app: &AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn data_root(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_data_dir()
         .map_err(|error| format!("no app data directory: {error}"))
@@ -438,6 +439,15 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Must be the first plugin registered — it has to check for a running
+        // instance before anything else starts up. Without it, launching the
+        // app a second time while it sits in the tray (which closing the
+        // window now does on purpose) would open a second process fighting the
+        // first one for the same microphone and the same global shortcuts,
+        // rather than just bringing the existing window forward.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main_window(app);
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(shortcuts::plugin())
@@ -446,6 +456,17 @@ pub fn run() {
         .manage(BackdropState(Mutex::new(Backdrop::None)))
         .setup(|app| {
             let handle = app.handle().clone();
+
+            // As early as the setup closure allows, and before anything that
+            // could plausibly panic. A release build has no console —
+            // `windows_subsystem = "windows"` sees to that — so without this,
+            // any panic on any thread, including the audio worker, vanishes
+            // with nothing left behind to debug from.
+            let log_path = data_root(&handle).map(|root| root.join("textream.log"));
+            if let Ok(path) = &log_path {
+                diagnostics::install_panic_hook(path.clone());
+            }
+
             build_tray(&handle)?;
 
             if let Some(window) = app.get_webview_window("main") {
@@ -472,7 +493,12 @@ pub fn run() {
 
             let refused = shortcuts::register(&handle);
             if !refused.is_empty() {
-                eprintln!("shortcuts already taken: {}", refused.join(", "));
+                if let Ok(path) = &log_path {
+                    diagnostics::append(
+                        path,
+                        &format!("shortcuts already taken: {}", refused.join(", ")),
+                    );
+                }
             }
 
             if let Some(window) = app.get_webview_window(OVERLAY) {
