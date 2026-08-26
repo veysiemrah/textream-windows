@@ -60,6 +60,8 @@ Today we are shipping something I have wanted for a long time.
   let loaded = $state(false);
 
   let running = $state(false);
+  let paused = $state(false);
+  let muted = $state(false);
   let status = $state("");
   let statusKind = $state<"info" | "warn">("info");
   let level = $state(0);
@@ -198,11 +200,23 @@ Today we are shipping something I have wanted for a long time.
 
   async function stop() {
     running = false;
+    paused = false;
+    muted = false;
     cancelAnimationFrame(frame);
     level = 0;
     voiceActive = false;
     await api.stopSession();
     await api.hideOverlay();
+  }
+
+  async function togglePause() {
+    paused = (await api.setPaused(!paused)).paused;
+    say(paused ? "Paused. The microphone is still open." : "");
+  }
+
+  async function toggleMute() {
+    muted = !muted;
+    await api.setMicrophoneMuted(muted);
   }
 
   async function loop(now: number) {
@@ -499,6 +513,14 @@ Today we are shipping something I have wanted for a long time.
         {running ? "Stop" : "Start"}
       </button>
       {#if running}
+        <button class="ghost" onclick={togglePause}>
+          {paused ? "Resume" : "Pause"}
+        </button>
+        {#if needsMicrophone}
+          <button class="ghost" class:muted onclick={toggleMute}>
+            {muted ? "Unmute" : "Mute"}
+          </button>
+        {/if}
         <div class="live">
           {#if needsMicrophone}
             <span class="dot" class:on={voiceActive}></span>
@@ -716,6 +738,10 @@ Today we are shipping something I have wanted for a long time.
   .ghost:disabled {
     opacity: 0.6;
     cursor: default;
+  }
+  .ghost.muted {
+    border-color: #7a4a12;
+    color: #ff9e0a;
   }
   .bar {
     height: 3px;

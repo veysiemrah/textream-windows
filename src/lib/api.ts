@@ -54,6 +54,8 @@ export interface ProgressView {
   voiceActive: boolean;
   /** Microphone level, 0..1, metered in Rust. */
   level: number;
+  /** Armed but holding position. */
+  paused: boolean;
   finished: boolean;
 }
 
@@ -149,6 +151,13 @@ export const startSession = (modelId: string | null) =>
 
 export const stopSession = () => invoke<ProgressView>("stop_session");
 export const isRunning = () => invoke<boolean>("is_running");
+
+/** Holds or resumes without releasing the microphone. */
+export const setPaused = (paused: boolean) =>
+  invoke<ProgressView>("set_paused", { paused });
+
+export const setMicrophoneMuted = (muted: boolean) =>
+  invoke<void>("set_microphone_muted", { muted });
 
 /**
  * Advances the clock for Classic and Voice-Activated.

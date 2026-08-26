@@ -85,6 +85,8 @@ pub struct ProgressView {
     pub voice_active: bool,
     /// Latest microphone level, 0..1, for the waveform.
     pub level: f32,
+    /// Armed but holding position.
+    pub paused: bool,
     pub finished: bool,
 }
 
@@ -98,6 +100,7 @@ pub struct Session {
     mode: Mode,
     words_per_second: f64,
     running: bool,
+    paused: bool,
     voice_active: bool,
     level: f32,
 }
@@ -170,26 +173,45 @@ impl Session {
 
     pub fn start(&mut self) {
         self.running = true;
-        if let Some(matcher) = self.matcher.as_mut() {
-            // The recogniser hands back a transcript starting from nothing, so
-            // the window has to be rebased or the first update snaps backwards.
-            matcher.restart_from_current_progress();
-        }
+        self.paused = false;
+        // The recogniser hands back a transcript starting from nothing, so
+        // the window has to be rebased or the first update snaps backwards.
+        self.rebase_transcript_window();
     }
 
     pub fn stop(&mut self) {
         self.running = false;
+        self.paused = false;
         self.voice_active = false;
         self.vad.reset();
+    }
+
+    /// Holds position without releasing the microphone or the overlay.
+    ///
+    /// Resuming rebases the transcript window: the presenter almost certainly
+    /// kept talking — that is usually *why* they paused — and a window still
+    /// measured from before the break would match that speech against the
+    /// script and jump the highlight.
+    pub fn set_paused(&mut self, paused: bool) {
+        let resuming = self.paused && !paused;
+        self.paused = paused;
+        if resuming {
+            self.rebase_transcript_window();
+        }
     }
 
     pub fn is_running(&self) -> bool {
         self.running
     }
 
+    /// Armed and actually advancing.
+    fn advancing(&self) -> bool {
+        self.running && !self.paused
+    }
+
     /// Folds a transcript window in. Ignored outside Word Tracking.
     pub fn feed_transcript(&mut self, transcript: &str) -> ProgressView {
-        if self.running && self.mode == Mode::WordTracking {
+        if self.advancing() && self.mode == Mode::WordTracking {
             if let Some(matcher) = self.matcher.as_mut() {
                 matcher.match_transcript(transcript);
                 let offset = matcher.recognized_character_count();
@@ -226,7 +248,7 @@ impl Session {
     /// Word Tracking ignores the clock entirely — its position comes from
     /// speech, and letting a timer nudge it too would race the matcher.
     pub fn tick(&mut self, delta_seconds: f64) -> ProgressView {
-        if self.running && self.mode != Mode::WordTracking {
+        if self.advancing() && self.mode != Mode::WordTracking {
             let gate_open = self.mode == Mode::Classic || self.voice_active;
             if let Some(scroller) = self.scroller.as_mut() {
                 scroller.advance(delta_seconds, gate_open);
@@ -298,6 +320,7 @@ impl Session {
             active_word: script.active_word_at(offset).map(|word| word.id),
             voice_active: self.voice_active,
             level: self.level,
+            paused: self.paused,
             finished: offset >= script.character_count() && !script.is_empty(),
         }
     }
@@ -432,6 +455,56 @@ mod tests {
         // The matcher agrees, so switching back does not jump.
         session.set_mode(Mode::WordTracking);
         assert_eq!(session.progress().character_offset, 6);
+    }
+
+    #[test]
+    fn pausing_holds_position_and_resuming_continues() {
+        let mut session = loaded("one two three four five six seven eight");
+        session.set_mode(Mode::Classic);
+        session.set_words_per_second(2.0);
+        session.start();
+        session.tick(1.0);
+        let held = session.progress().word_progress;
+
+        session.set_paused(true);
+        let paused = session.tick(5.0);
+        assert!(paused.paused);
+        assert_eq!(paused.word_progress, held);
+
+        session.set_paused(false);
+        assert!(session.tick(1.0).word_progress > held);
+    }
+
+    #[test]
+    fn a_pause_stops_word_tracking_too() {
+        let mut session = loaded("alpha beta gamma delta");
+        session.start();
+        session.set_paused(true);
+        assert_eq!(session.feed_transcript("alpha beta").character_offset, 0);
+    }
+
+    #[test]
+    fn resuming_rebases_so_speech_during_the_pause_is_not_replayed() {
+        let mut session = loaded("alpha beta gamma delta epsilon");
+        session.start();
+        session.feed_transcript("alpha beta");
+        let before = session.progress().character_offset;
+
+        session.set_paused(true);
+        session.set_paused(false);
+        // A fresh window from the recogniser starts at the current position
+        // rather than being measured from the origin.
+        assert_eq!(session.progress().character_offset, before);
+        assert!(session.feed_transcript("gamma").character_offset >= before);
+    }
+
+    #[test]
+    fn stopping_clears_a_pause() {
+        let mut session = loaded("alpha beta");
+        session.start();
+        session.set_paused(true);
+        session.stop();
+        assert!(!session.progress().paused);
     }
 
     #[test]

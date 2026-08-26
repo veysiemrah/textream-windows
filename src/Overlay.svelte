@@ -18,6 +18,31 @@
 
   const activeWord = $derived(progress?.activeWord ?? -1);
 
+  /** Words moved per wheel notch when scrolling to catch up. */
+  const WORDS_PER_NOTCH = 3;
+
+  /**
+   * Scrolls the reading position rather than the viewport.
+   *
+   * Moving only the scrollbar would look right for a moment and then snap back
+   * the instant the next progress event arrives, because the effect below
+   * follows the active word. Jumping the tracker is what the presenter means
+   * by scrolling: get ahead, or go back and pick up a line again.
+   */
+  async function catchUp(event: WheelEvent) {
+    if (!script || script.words.length === 0) return;
+    event.preventDefault();
+
+    const direction = Math.sign(event.deltaY);
+    if (direction === 0) return;
+    const from = activeWord < 0 ? 0 : activeWord;
+    const target = Math.min(
+      script.words.length - 1,
+      Math.max(0, from + direction * WORDS_PER_NOTCH),
+    );
+    progress = await jumpToWord(target);
+  }
+
   const style = $derived(
     appearance
       ? [
@@ -67,7 +92,7 @@
 
 <div class="pill" dir={script?.direction ?? "ltr"} {style}>
   {#if script && script.words.length > 0}
-    <div class="viewport" bind:this={viewport}>
+    <div class="viewport" bind:this={viewport} onwheel={catchUp}>
       <p class="words">
         {#each script.words as word (word.id)}<button
             type="button"

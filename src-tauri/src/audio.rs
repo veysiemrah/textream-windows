@@ -39,6 +39,7 @@ const QUEUE_CHUNKS: usize = 32;
 /// A running capture session. Dropping it stops the microphone.
 pub struct AudioEngine {
     stop: Arc<AtomicBool>,
+    muted: Arc<AtomicBool>,
     capture: Option<JoinHandle<()>>,
     worker: Option<JoinHandle<()>>,
 }
@@ -60,12 +61,14 @@ impl AudioEngine {
         let (sender, receiver) = sync_channel::<Vec<f32>>(QUEUE_CHUNKS);
 
         let stop = Arc::new(AtomicBool::new(false));
+        let muted = Arc::new(AtomicBool::new(false));
         let worker = {
             let app = app.clone();
             let stop = stop.clone();
+            let muted = muted.clone();
             std::thread::Builder::new()
                 .name("textream-speech".into())
-                .spawn(move || run_worker(app, receiver, recognizer, sample_rate, stop))
+                .spawn(move || run_worker(app, receiver, recognizer, sample_rate, stop, muted))
                 .map_err(|error| error.to_string())?
         };
 
@@ -94,9 +97,19 @@ impl AudioEngine {
 
         Ok(Self {
             stop,
+            muted,
             capture: Some(capture),
             worker: Some(worker),
         })
+    }
+
+    /// Stops metering and transcribing without closing the device.
+    ///
+    /// The stream stays open so unmuting is instant — reopening a WASAPI
+    /// capture device mid-take costs hundreds of milliseconds and can fail if
+    /// something else grabbed it in the meantime.
+    pub fn set_muted(&self, muted: bool) {
+        self.muted.store(muted, Ordering::Relaxed);
     }
 }
 
@@ -189,6 +202,7 @@ fn run_worker(
     mut recognizer: Option<Recognizer>,
     sample_rate: u32,
     stop: Arc<AtomicBool>,
+    muted: Arc<AtomicBool>,
 ) {
     let started = Instant::now();
     let mut last_transcript = String::new();
@@ -198,7 +212,15 @@ fn run_worker(
             break;
         }
 
-        let level = normalized_rms(&chunk);
+        let is_muted = muted.load(Ordering::Relaxed);
+        // Reporting silence rather than skipping the update keeps the speech
+        // gate closing on its own timer and the waveform reading zero, so a
+        // muted microphone looks muted instead of frozen.
+        let level = if is_muted {
+            0.0
+        } else {
+            normalized_rms(&chunk)
+        };
         let timestamp = started.elapsed().as_secs_f64();
 
         let progress = {
@@ -207,6 +229,10 @@ fn run_worker(
             session.feed_audio_level(level, timestamp)
         };
         crate::broadcast(&app, progress);
+
+        if is_muted {
+            continue;
+        }
 
         let Some(recognizer) = recognizer.as_mut() else {
             continue;

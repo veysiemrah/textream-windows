@@ -149,6 +149,25 @@ fn is_running(state: tauri::State<'_, SessionState>) -> bool {
     state.0.lock().unwrap().is_running()
 }
 
+/// Holds or resumes the prompter without releasing the microphone.
+#[tauri::command]
+fn set_paused(app: AppHandle, state: tauri::State<'_, SessionState>, paused: bool) -> ProgressView {
+    let progress = {
+        let mut session = state.0.lock().unwrap();
+        session.set_paused(paused);
+        session.progress()
+    };
+    broadcast(&app, progress)
+}
+
+/// Mutes the microphone for the running session.
+#[tauri::command]
+fn set_microphone_muted(audio: tauri::State<'_, AudioState>, muted: bool) {
+    if let Some(engine) = audio.0.lock().unwrap().as_ref() {
+        engine.set_muted(muted);
+    }
+}
+
 /// Advances the clock for the paced modes.
 ///
 /// Word Tracking needs no ticking — the audio worker pushes progress events as
@@ -342,6 +361,8 @@ pub fn run() {
             start_session,
             stop_session,
             is_running,
+            set_paused,
+            set_microphone_muted,
             tick,
             jump_to_word,
             jump_to_offset,
