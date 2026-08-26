@@ -7,6 +7,7 @@
 //! webview calls.
 
 mod audio;
+mod backdrop;
 mod model;
 mod overlay;
 mod session;
@@ -22,6 +23,7 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 use audio::AudioEngine;
+use backdrop::Backdrop;
 use model::{DownloadProgress, ModelStatus};
 use overlay::Geometry;
 use session::{Mode, ProgressView, ScriptView, SessionState};
@@ -39,6 +41,9 @@ const EVENT_APPEARANCE: &str = "textream://appearance";
 /// The running capture session, if any.
 #[derive(Default)]
 struct AudioState(Mutex<Option<AudioEngine>>);
+
+/// The backdrop the compositor accepted for the main window.
+struct BackdropState(Mutex<Backdrop>);
 
 fn overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
     app.get_webview_window(OVERLAY)
@@ -199,6 +204,16 @@ fn jump_to_offset(
     broadcast(&app, progress)
 }
 
+/// Which backdrop the compositor gave the main window.
+///
+/// The UI needs this because a frameless transparent window with no effect
+/// applied shows the desktop straight through — it has to paint an opaque
+/// background instead of looking broken.
+#[tauri::command]
+fn window_backdrop(state: tauri::State<'_, BackdropState>) -> Backdrop {
+    *state.0.lock().unwrap()
+}
+
 #[tauri::command]
 fn load_settings(app: AppHandle) -> Result<Settings, String> {
     let settings = settings::load(&data_root(&app)?);
@@ -339,9 +354,15 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(SessionState::new())
         .manage(AudioState::default())
+        .manage(BackdropState(Mutex::new(Backdrop::None)))
         .setup(|app| {
             let handle = app.handle().clone();
             build_tray(&handle)?;
+
+            if let Some(window) = app.get_webview_window("main") {
+                let applied = backdrop::apply(&window);
+                *app.state::<BackdropState>().0.lock().unwrap() = applied;
+            }
 
             if let Some(window) = app.get_webview_window(OVERLAY) {
                 if let Ok(hwnd) = window.hwnd() {
@@ -366,6 +387,7 @@ pub fn run() {
             tick,
             jump_to_word,
             jump_to_offset,
+            window_backdrop,
             load_settings,
             save_settings,
             speech_models,

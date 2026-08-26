@@ -12,6 +12,8 @@
     Mode,
     Settings,
   } from "./lib/api";
+  import Chrome from "./Chrome.svelte";
+  import LiquidStart from "./LiquidStart.svelte";
 
   const SAMPLE = `Welcome back to the show. [smile at camera]
 
@@ -40,6 +42,20 @@ Today we are shipping something I have wanted for a long time.
     script: "",
   };
 
+  const MODES: { id: Mode; label: string; blurb: string }[] = [
+    {
+      id: "wordTracking",
+      label: "Follow",
+      blurb: "Highlights each word as you say it.",
+    },
+    { id: "classic", label: "Auto", blurb: "Scrolls at a constant speed." },
+    {
+      id: "voiceActivated",
+      label: "Voice",
+      blurb: "Scrolls while you speak, holds in silence.",
+    },
+  ];
+
   const FONTS: { id: FontFamily; label: string }[] = [
     { id: "sans", label: "Sans" },
     { id: "serif", label: "Serif" },
@@ -47,17 +63,20 @@ Today we are shipping something I have wanted for a long time.
     { id: "dyslexic", label: "Dyslexic" },
   ];
   const SIZES: FontSize[] = ["xs", "sm", "lg", "xl"];
-  const COLORS: { id: ColorPreset; css: string }[] = [
-    { id: "white", css: "#ffffff" },
-    { id: "yellow", css: "#ffd60a" },
-    { id: "green", css: "#33d64a" },
-    { id: "blue", css: "#4f8cff" },
-    { id: "pink", css: "#ff6191" },
-    { id: "orange", css: "#ff9e0a" },
-  ];
+  const COLORS: Record<ColorPreset, string> = {
+    white: "#ffffff",
+    yellow: "#ffd60a",
+    green: "#33d64a",
+    blue: "#4f8cff",
+    pink: "#ff6191",
+    orange: "#ff9e0a",
+  };
+  const COLOR_IDS = Object.keys(COLORS) as ColorPreset[];
 
   let settings = $state<Settings>({ ...FALLBACK, script: SAMPLE });
   let loaded = $state(false);
+  let backdrop = $state<"mica" | "blur" | "none">("none");
+  let panelOpen = $state(false);
 
   let running = $state(false);
   let paused = $state(false);
@@ -83,11 +102,19 @@ Today we are shipping something I have wanted for a long time.
   );
   const speechReady = $derived(selectedModel?.installed === true);
   const needsMicrophone = $derived(settings.mode !== "classic");
+  const modeIndex = $derived(
+    Math.max(
+      0,
+      MODES.findIndex((mode) => mode.id === settings.mode),
+    ),
+  );
   const wordCount = $derived(
     settings.script.trim() === ""
       ? 0
       : settings.script.trim().split(/\s+/).length,
   );
+  const minutes = $derived(wordCount / settings.wordsPerSecond / 60);
+  const accent = $derived(COLORS[settings.appearance.highlight]);
 
   const geometry = (): Geometry => ({
     placement: settings.placement,
@@ -131,6 +158,7 @@ Today we are shipping something I have wanted for a long time.
 
   async function restore() {
     try {
+      backdrop = await api.windowBackdrop();
       const stored = await api.loadSettings();
       // A first run has no script; the sample is more use than a blank page.
       settings = { ...stored, script: stored.script || SAMPLE };
@@ -151,12 +179,17 @@ Today we are shipping something I have wanted for a long time.
     try {
       const updated = await api.downloadSpeechModel(selectedModel.id);
       models = models.map((m) => (m.id === updated.id ? updated : m));
-      say(`${updated.label} is ready. Word Tracking is available.`);
+      say(`${updated.label} is ready. Follow mode is available.`);
     } catch (error) {
       say(`Download failed: ${error}`, "warn");
     } finally {
       downloading = false;
     }
+  }
+
+  async function toggleRun() {
+    if (running) await stop();
+    else await start();
   }
 
   async function start() {
@@ -186,13 +219,14 @@ Today we are shipping something I have wanted for a long time.
     const accepted = await api.setHideFromCapture(settings.hideFromCapture);
     if (settings.hideFromCapture && !accepted) {
       say(
-        "This build of Windows cannot hide the overlay from screen capture (needs 10 2004 or newer).",
+        "This build of Windows cannot hide the overlay from capture. It needs Windows 10 2004 or newer.",
         "warn",
       );
     } else {
       say("");
     }
 
+    panelOpen = false;
     running = true;
     lastFrameTime = performance.now();
     frame = requestAnimationFrame(loop);
@@ -211,7 +245,7 @@ Today we are shipping something I have wanted for a long time.
 
   async function togglePause() {
     paused = (await api.setPaused(!paused)).paused;
-    say(paused ? "Paused. The microphone is still open." : "");
+    say(paused ? "Held. The microphone is still open." : "");
   }
 
   async function toggleMute() {
@@ -268,592 +302,765 @@ Today we are shipping something I have wanted for a long time.
   });
 </script>
 
-<main>
-  <header>
-    <h1>Textream</h1>
-    <span class="sub">Teleprompter for Windows</span>
-  </header>
+<div
+  class="shell"
+  class:opaque={backdrop === "none"}
+  style="--accent:{accent}"
+>
+  <Chrome />
 
-  <section class="editor">
+  <main class="stage">
     <textarea
       bind:value={settings.script}
       oninput={persist}
       spellcheck="false"
-      placeholder="Paste your script. Put stage directions in [brackets] — they are shown but never waited for."
+      placeholder="Paste your script. Put stage directions in [brackets] — they show on the prompter but it never waits for them."
     ></textarea>
-    <div class="meta">
-      <span>{wordCount} words</span>
+
+    <div class="gauge">
+      <span><b>{wordCount}</b> words</span>
+      <span class="sep"></span>
       <span
-        >~{(wordCount / settings.wordsPerSecond / 60).toFixed(1)} min at this pace</span
+        ><b>{minutes < 1 ? minutes.toFixed(1) : Math.round(minutes)}</b> min at this
+        pace</span
       >
-    </div>
-  </section>
-
-  <section class="controls">
-    <fieldset>
-      <legend>Mode</legend>
-      <div class="segmented">
-        <button
-          class:active={settings.mode === "wordTracking"}
-          disabled={!speechReady}
-          title={speechReady
-            ? "Highlights each word as you say it"
-            : "Download the speech model to enable this"}
-          onclick={() => pushMode("wordTracking")}
-        >
-          Word Tracking
-          {#if !speechReady}<em>needs model</em>{/if}
-        </button>
-        <button
-          class:active={settings.mode === "classic"}
-          title="Scrolls at a constant speed. No microphone."
-          onclick={() => pushMode("classic")}>Classic</button
-        >
-        <button
-          class:active={settings.mode === "voiceActivated"}
-          title="Scrolls while you speak, pauses in silence."
-          onclick={() => pushMode("voiceActivated")}>Voice-Activated</button
-        >
-      </div>
-    </fieldset>
-
-    <fieldset>
-      <legend>Speech model</legend>
-      {#if selectedModel}
-        <div class="model">
-          <div class="model-name">
-            <strong>{selectedModel.label}</strong>
-            <span class="tag"
-              >{selectedModel.installed
-                ? "installed"
-                : megabytes(selectedModel.downloadBytes)}</span
-            >
-          </div>
-          {#if !selectedModel.installed}
-            <button class="ghost" disabled={downloading} onclick={downloadModel}>
-              {downloading ? `${downloadPercent.toFixed(0)}%` : "Download"}
-            </button>
-          {/if}
-        </div>
-        {#if downloading}
-          <div class="bar"><span style="width:{downloadPercent}%"></span></div>
-        {/if}
-      {:else}
-        <p class="hint">No speech models are registered.</p>
+      {#if status}
+        <span class="sep"></span>
+        <span class="status" class:warn={statusKind === "warn"}>{status}</span>
       {/if}
-      <p class="hint">
-        Recognition runs entirely on this machine. Nothing is uploaded, and no
-        account is needed.
-      </p>
-    </fieldset>
+    </div>
+  </main>
 
-    <fieldset>
-      <legend>Pace — {settings.wordsPerSecond.toFixed(1)} words/s</legend>
-      <input
-        type="range"
-        min="0.5"
-        max="8"
-        step="0.1"
-        bind:value={settings.wordsPerSecond}
-        oninput={pushSpeed}
-        disabled={settings.mode === "wordTracking"}
-      />
-      <p class="hint">
-        {settings.mode === "wordTracking"
-          ? "Word Tracking follows your voice, so pace is not used."
-          : "How fast the script advances."}
-      </p>
-    </fieldset>
+  <aside class="panel" class:open={panelOpen} aria-hidden={!panelOpen}>
+    <div class="panel-scroll">
+      <section>
+        <h2>Prompter</h2>
+        <label class="field">
+          <span class="label">Placement</span>
+          <select bind:value={settings.placement} onchange={pushGeometry}>
+            <option value="topCenter">Top centre — near the webcam</option>
+            <option value="floating">Floating window</option>
+            <option value="fullscreen">Fullscreen on this display</option>
+            <option value="transportStrip">Strip above the taskbar</option>
+          </select>
+        </label>
+        <p class="note">
+          The prompter sits at the top of the screen because that is where your
+          camera is. The taskbar strip carries controls only.
+        </p>
 
-    <fieldset>
-      <legend>Placement</legend>
-      <select bind:value={settings.placement} onchange={pushGeometry}>
-        <option value="topCenter">Top centre — near the webcam</option>
-        <option value="floating">Floating window</option>
-        <option value="fullscreen">Fullscreen on this display</option>
-        <option value="transportStrip">Transport strip above taskbar</option>
-      </select>
-      <p class="hint">
-        The prompter sits at the top of the screen because that is where your
-        camera is. The taskbar strip carries controls only.
-      </p>
-    </fieldset>
+        <label class="field">
+          <span class="label">Width <b>{settings.width}</b></span>
+          <input
+            type="range"
+            min="280"
+            max="500"
+            bind:value={settings.width}
+            oninput={pushGeometry}
+          />
+        </label>
+        <label class="field">
+          <span class="label">Height <b>{settings.height}</b></span>
+          <input
+            type="range"
+            min="100"
+            max="400"
+            bind:value={settings.height}
+            oninput={pushGeometry}
+          />
+        </label>
+      </section>
 
-    <fieldset class="split">
-      <label>
-        Width — {settings.width}px
-        <input
-          type="range"
-          min="280"
-          max="500"
-          bind:value={settings.width}
-          oninput={pushGeometry}
-        />
-      </label>
-      <label>
-        Height — {settings.height}px
-        <input
-          type="range"
-          min="100"
-          max="400"
-          bind:value={settings.height}
-          oninput={pushGeometry}
-        />
-      </label>
-    </fieldset>
+      <section>
+        <h2>Type</h2>
+        <div class="chips">
+          {#each FONTS as font (font.id)}
+            <button
+              class:on={settings.appearance.fontFamily === font.id}
+              onclick={() => {
+                settings.appearance.fontFamily = font.id;
+                persist();
+              }}>{font.label}</button
+            >
+          {/each}
+        </div>
+        <div class="chips">
+          {#each SIZES as size (size)}
+            <button
+              class:on={settings.appearance.fontSize === size}
+              onclick={() => {
+                settings.appearance.fontSize = size;
+                persist();
+              }}>{size.toUpperCase()}</button
+            >
+          {/each}
+        </div>
+      </section>
 
-    <fieldset>
-      <legend>Typeface</legend>
-      <div class="segmented">
-        {#each FONTS as font (font.id)}
-          <button
-            class:active={settings.appearance.fontFamily === font.id}
-            onclick={() => {
-              settings.appearance.fontFamily = font.id;
-              persist();
-            }}>{font.label}</button
+      <section>
+        <h2>Colour</h2>
+        <div class="field">
+          <span class="label">Spoken word</span>
+          <div class="swatches">
+            {#each COLOR_IDS as id (id)}
+              <button
+                class="swatch"
+                class:on={settings.appearance.highlight === id}
+                style="--c:{COLORS[id]}"
+                aria-label="Highlight {id}"
+                title={id}
+                onclick={() => {
+                  settings.appearance.highlight = id;
+                  persist();
+                }}
+              ></button>
+            {/each}
+          </div>
+        </div>
+        <div class="field">
+          <span class="label">Cues</span>
+          <div class="swatches">
+            {#each COLOR_IDS as id (id)}
+              <button
+                class="swatch"
+                class:on={settings.appearance.cue === id}
+                style="--c:{COLORS[id]}"
+                aria-label="Cue {id}"
+                title={id}
+                onclick={() => {
+                  settings.appearance.cue = id;
+                  persist();
+                }}
+              ></button>
+            {/each}
+          </div>
+        </div>
+        <label class="field">
+          <span class="label"
+            >Background <b>{(settings.appearance.opacity * 100).toFixed(0)}%</b
+            ></span
           >
-        {/each}
-      </div>
-      <div class="segmented sizes">
-        {#each SIZES as size (size)}
-          <button
-            class:active={settings.appearance.fontSize === size}
-            onclick={() => {
-              settings.appearance.fontSize = size;
-              persist();
-            }}>{size.toUpperCase()}</button
-          >
-        {/each}
-      </div>
-    </fieldset>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            bind:value={settings.appearance.opacity}
+            oninput={persist}
+          />
+        </label>
+      </section>
 
-    <fieldset>
-      <legend>Colour</legend>
-      <div class="swatch-row">
-        <span class="swatch-label">Spoken word</span>
-        {#each COLORS as color (color.id)}
-          <button
-            class="swatch"
-            class:active={settings.appearance.highlight === color.id}
-            style="background:{color.css}"
-            title={color.id}
-            aria-label="Highlight {color.id}"
-            onclick={() => {
-              settings.appearance.highlight = color.id;
-              persist();
-            }}
-          ></button>
-        {/each}
-      </div>
-      <div class="swatch-row">
-        <span class="swatch-label">Cues</span>
-        {#each COLORS as color (color.id)}
-          <button
-            class="swatch"
-            class:active={settings.appearance.cue === color.id}
-            style="background:{color.css}"
-            title={color.id}
-            aria-label="Cue {color.id}"
-            onclick={() => {
-              settings.appearance.cue = color.id;
-              persist();
-            }}
-          ></button>
-        {/each}
-      </div>
-    </fieldset>
+      <section>
+        <h2>Behaviour</h2>
+        <label class="toggle">
+          <input
+            type="checkbox"
+            bind:checked={settings.hideFromCapture}
+            onchange={pushHideFromCapture}
+          />
+          <span>Hide from screen share and recordings</span>
+        </label>
+        <label class="toggle">
+          <input
+            type="checkbox"
+            bind:checked={settings.clickThrough}
+            onchange={pushClickThrough}
+          />
+          <span>Let clicks pass through to the app behind</span>
+        </label>
+        <p class="note">
+          Clicks cannot both pass through and land on the prompter. Turn this
+          off to click a word and jump there.
+        </p>
+      </section>
 
-    <fieldset>
-      <legend>
-        Background — {(settings.appearance.opacity * 100).toFixed(0)}%
-      </legend>
-      <input
-        type="range"
-        min="0"
-        max="1"
-        step="0.01"
-        bind:value={settings.appearance.opacity}
-        oninput={persist}
-      />
-      <p class="hint">
-        Lower is more see-through. Fully clear leaves only the text over your
-        screen.
-      </p>
-    </fieldset>
-
-    <fieldset>
-      <legend>Overlay behaviour</legend>
-      <label class="check">
-        <input
-          type="checkbox"
-          bind:checked={settings.hideFromCapture}
-          onchange={pushHideFromCapture}
-        />
-        Hide from screen share and recordings
-      </label>
-      <label class="check">
-        <input
-          type="checkbox"
-          bind:checked={settings.clickThrough}
-          onchange={pushClickThrough}
-        />
-        Let clicks pass through to the app behind
-      </label>
-      <p class="hint">
-        Clicks cannot both pass through and land on the overlay. Turn this off
-        to click a word and jump the prompter there.
-      </p>
-    </fieldset>
-  </section>
-
-  <footer>
-    <div class="transport">
-      <button class="primary" onclick={running ? stop : start}>
-        {running ? "Stop" : "Start"}
-      </button>
-      {#if running}
-        <button class="ghost" onclick={togglePause}>
-          {paused ? "Resume" : "Pause"}
-        </button>
-        {#if needsMicrophone}
-          <button class="ghost" class:muted onclick={toggleMute}>
-            {muted ? "Unmute" : "Mute"}
-          </button>
-        {/if}
-        <div class="live">
-          {#if needsMicrophone}
-            <span class="dot" class:on={voiceActive}></span>
-            <div class="wave">
-              <span style="width:{Math.min(100, level * 400)}%"></span>
+      <section>
+        <h2>Speech</h2>
+        {#if selectedModel}
+          <div class="model">
+            <div>
+              <strong>{selectedModel.label}</strong>
+              <span class="tag"
+                >{selectedModel.installed
+                  ? "installed"
+                  : megabytes(selectedModel.downloadBytes)}</span
+              >
+            </div>
+            {#if !selectedModel.installed}
+              <button
+                class="action"
+                disabled={downloading}
+                onclick={downloadModel}
+              >
+                {downloading ? `${downloadPercent.toFixed(0)}%` : "Download"}
+              </button>
+            {/if}
+          </div>
+          {#if downloading}
+            <div class="progress">
+              <span style="width:{downloadPercent}%"></span>
             </div>
           {/if}
-          <span class="counter">word {Math.floor(wordProgress)}</span>
-        </div>
+        {:else}
+          <p class="note">No speech models are registered.</p>
+        {/if}
+        <p class="note">
+          Recognition runs on this machine. Nothing is uploaded, and there is no
+          account.
+        </p>
+      </section>
+    </div>
+  </aside>
+
+  <footer class="dock">
+    <LiquidStart
+      {running}
+      {paused}
+      {level}
+      listening={needsMicrophone && !muted}
+      onclick={toggleRun}
+    />
+
+    <div class="middle">
+      <div class="segmented" style="--i:{modeIndex}">
+        <span class="pill" aria-hidden="true"></span>
+        {#each MODES as mode (mode.id)}
+          <button
+            class:on={settings.mode === mode.id}
+            disabled={mode.id === "wordTracking" && !speechReady}
+            title={mode.id === "wordTracking" && !speechReady
+              ? "Download the speech model to enable this"
+              : mode.blurb}
+            onclick={() => pushMode(mode.id)}
+          >
+            {mode.label}
+          </button>
+        {/each}
+      </div>
+
+      {#if settings.mode === "classic" || settings.mode === "voiceActivated"}
+        <label class="pace">
+          <span class="label">Pace <b>{settings.wordsPerSecond.toFixed(1)}</b> w/s</span>
+          <input
+            type="range"
+            min="0.5"
+            max="8"
+            step="0.1"
+            bind:value={settings.wordsPerSecond}
+            oninput={pushSpeed}
+          />
+        </label>
+      {:else}
+        <p class="pace-note">Follow mode paces itself from your voice.</p>
       {/if}
     </div>
-    {#if status}
-      <p class="status" class:warn={statusKind === "warn"}>{status}</p>
-    {/if}
+
+    <div class="right">
+      {#if running}
+        <div class="readout">
+          {#if needsMicrophone}
+            <span class="tally" class:live={voiceActive} class:muted></span>
+          {/if}
+          <span class="count">{Math.floor(wordProgress)}<i>/{wordCount}</i></span>
+        </div>
+        <button class="action" onclick={togglePause}
+          >{paused ? "Resume" : "Hold"}</button
+        >
+        {#if needsMicrophone}
+          <button class="action" class:warn={muted} onclick={toggleMute}
+            >{muted ? "Unmute" : "Mute"}</button
+          >
+        {/if}
+      {/if}
+      <button
+        class="action"
+        class:on={panelOpen}
+        aria-expanded={panelOpen}
+        onclick={() => (panelOpen = !panelOpen)}>Settings</button
+      >
+    </div>
   </footer>
-</main>
+</div>
 
 <style>
-  :global(:root) {
-    color-scheme: dark;
-  }
+  :global(html),
   :global(body) {
     margin: 0;
-    background: #0d0f12;
-    color: #e8eaed;
-    font:
-      14px/1.5 "Segoe UI Variable Text",
-      "Segoe UI",
-      system-ui,
-      sans-serif;
+    height: 100%;
+    /* The window is transparent so the compositor's backdrop shows through. */
+    background: transparent;
+    overflow: hidden;
+    color-scheme: dark;
   }
 
-  main {
+  .shell {
+    /* Bahnschrift is a variable DIN that ships with Windows 10 and 11. It is
+       the lettering of broadcast and studio equipment, it costs nothing to
+       embed, and it is nobody's default UI face. */
+    --display: Bahnschrift, "DIN Alternate", "Segoe UI", sans-serif;
+    --body: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+
+    --tint: rgba(11, 13, 18, 0.72);
+    --surface: rgba(255, 255, 255, 0.045);
+    --surface-lift: rgba(255, 255, 255, 0.08);
+    --edge: rgba(255, 255, 255, 0.09);
+    --ink: #edf0f5;
+    --ink-dim: #8a9099;
+    --ink-faint: #5c636d;
+    /* --accent is set inline from the highlight colour: the app wears
+       whatever colour the presenter reads in. */
+
+    position: relative;
     display: flex;
     flex-direction: column;
-    gap: 20px;
-    padding: 24px 28px 20px;
-    min-height: 100vh;
+    height: 100vh;
     box-sizing: border-box;
+    overflow: hidden;
+    /* Square on purpose. The DWM backdrop fills the whole window rectangle, so
+       rounding the content would leave the blur showing as sharp corners
+       outside it. Windows 11 rounds top-level windows itself anyway. */
+    background: var(--tint);
+    box-shadow: inset 0 0 0 1px var(--edge);
+    color: var(--ink);
+    font: 14px/1.55 var(--body);
+  }
+  /* No compositor effect available: paint an opaque surface rather than
+     letting the desktop show straight through a transparent window. */
+  .shell.opaque {
+    background: #0b0d12;
   }
 
-  header {
-    display: flex;
-    align-items: baseline;
-    gap: 12px;
-  }
-  h1 {
-    margin: 0;
-    font-size: 20px;
-    font-weight: 600;
-    letter-spacing: -0.01em;
-  }
-  .sub {
-    color: #8b9098;
-    font-size: 13px;
-  }
-
-  .editor {
+  .stage {
+    position: relative;
+    flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    flex: 1;
-    min-height: 150px;
+    min-height: 0;
+    padding: 4px 22px 0;
   }
+
   textarea {
     flex: 1;
+    min-height: 0;
     resize: none;
-    padding: 16px;
-    border: 1px solid #24282e;
-    border-radius: 10px;
-    background: #14171b;
-    color: inherit;
-    font: inherit;
-    line-height: 1.7;
-  }
-  textarea:focus {
-    outline: 2px solid #4f8cff;
-    outline-offset: -1px;
-  }
-  .meta {
-    display: flex;
-    gap: 16px;
-    color: #8b9098;
-    font-size: 12px;
-  }
-
-  .controls {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-    gap: 16px 24px;
-  }
-  fieldset {
     border: 0;
-    margin: 0;
-    padding: 0;
-    min-width: 0;
-  }
-  legend {
-    padding: 0 0 8px;
-    color: #8b9098;
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-  .split {
-    display: flex;
-    gap: 16px;
-  }
-  .split label {
-    flex: 1;
-    font-size: 12px;
-    color: #8b9098;
-  }
-
-  .segmented {
-    display: flex;
-    gap: 4px;
-    background: #14171b;
-    border: 1px solid #24282e;
-    border-radius: 8px;
-    padding: 4px;
-  }
-  .segmented.sizes {
-    margin-top: 6px;
-  }
-  .segmented button {
-    flex: 1;
-    padding: 7px 6px;
-    border: 0;
-    border-radius: 5px;
+    padding: 8px 2px 16px;
     background: transparent;
-    color: #b6bbc2;
-    font: inherit;
-    font-size: 12px;
-    cursor: pointer;
+    color: var(--ink);
+    font: 16px/1.85 var(--body);
+    outline: none;
   }
-  .segmented button:hover:not(:disabled) {
-    background: #1d2127;
-  }
-  .segmented button.active {
-    background: #2b64d9;
-    color: #fff;
-  }
-  .segmented button:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-  .segmented em {
-    display: block;
-    font-size: 9px;
-    font-style: normal;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    opacity: 0.7;
+  textarea::placeholder {
+    color: var(--ink-faint);
   }
 
-  .swatch-row {
+  .gauge {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 3px 0;
+    gap: 12px;
+    padding: 10px 2px;
+    border-top: 1px solid var(--edge);
+    font-family: var(--display);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
   }
-  .swatch-label {
-    width: 88px;
-    color: #8b9098;
-    font-size: 12px;
+  .gauge b {
+    color: var(--ink-dim);
+    font-variant-numeric: tabular-nums;
+  }
+  .sep {
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0.5;
+  }
+  .status {
+    text-transform: none;
+    letter-spacing: 0.02em;
+  }
+  .status.warn {
+    color: #ff9e0a;
+  }
+
+  /* ---- settings panel ---- */
+  .panel {
+    position: absolute;
+    top: 38px;
+    right: 0;
+    bottom: 110px;
+    width: 340px;
+    z-index: 3;
+    background: rgba(9, 11, 15, 0.86);
+    border-left: 1px solid var(--edge);
+    backdrop-filter: blur(24px) saturate(140%);
+    transform: translateX(100%);
+    opacity: 0;
+    visibility: hidden;
+    /* `visibility` animates discretely — given a duration it flips at the
+       halfway point, so the panel would spend the first half of its entrance
+       invisible and then appear mid-slide. Zero duration with a delay instead:
+       it becomes visible immediately on open, and only hides once the closing
+       slide has finished. */
+    transition:
+      transform 380ms cubic-bezier(0.32, 1.35, 0.5, 1),
+      opacity 200ms ease,
+      visibility 0s linear 380ms;
+  }
+  .panel.open {
+    transform: translateX(0);
+    opacity: 1;
+    visibility: visible;
+    transition:
+      transform 380ms cubic-bezier(0.32, 1.35, 0.5, 1),
+      opacity 200ms ease,
+      visibility 0s linear 0s;
+  }
+  .panel-scroll {
+    height: 100%;
+    overflow-y: auto;
+    padding: 20px 22px 28px;
+    box-sizing: border-box;
+  }
+  .panel section + section {
+    margin-top: 26px;
+  }
+  h2 {
+    margin: 0 0 12px;
+    font-family: var(--display);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+
+  .field {
+    display: block;
+    margin-bottom: 14px;
+  }
+  .label {
+    display: block;
+    margin-bottom: 7px;
+    font-family: var(--display);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+  }
+  .label b {
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+  .note {
+    margin: 8px 0 0;
+    color: var(--ink-faint);
+    font-size: 11.5px;
+    line-height: 1.5;
+  }
+
+  select {
+    width: 100%;
+    padding: 9px 10px;
+    border: 1px solid var(--edge);
+    border-radius: 8px;
+    background: var(--surface);
+    color: inherit;
+    font: inherit;
+    font-size: 13px;
+  }
+  select:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+  }
+
+  input[type="range"] {
+    width: 100%;
+    accent-color: var(--accent);
+  }
+
+  .chips {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  .chips button {
+    flex: 1;
+    padding: 8px 4px;
+    border: 1px solid var(--edge);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--ink-dim);
+    font-family: var(--display);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition:
+      transform 320ms cubic-bezier(0.34, 1.56, 0.64, 1),
+      background 160ms ease,
+      color 160ms ease;
+  }
+  .chips button:hover {
+    background: var(--surface-lift);
+    color: var(--ink);
+  }
+  .chips button.on {
+    background: color-mix(in srgb, var(--accent) 20%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+    color: var(--ink);
+    transform: translateY(-1px);
+  }
+
+  .swatches {
+    display: flex;
+    gap: 8px;
   }
   .swatch {
-    width: 20px;
-    height: 20px;
+    width: 22px;
+    height: 22px;
+    padding: 0;
     border: 2px solid transparent;
     border-radius: 50%;
-    padding: 0;
+    background: var(--c);
     cursor: pointer;
     box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+    transition: transform 320ms cubic-bezier(0.34, 1.56, 0.64, 1);
   }
-  .swatch.active {
-    border-color: #e8eaed;
+  .swatch:hover {
+    transform: scale(1.14);
+  }
+  .swatch.on {
+    border-color: var(--ink);
+    transform: scale(1.08);
+  }
+
+  .toggle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 5px 0;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .toggle input {
+    accent-color: var(--accent);
   }
 
   .model {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
-    padding: 10px 12px;
-    border: 1px solid #24282e;
-    border-radius: 8px;
-    background: #14171b;
-  }
-  .model-name {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    min-width: 0;
+    gap: 10px;
+    padding: 11px 13px;
+    border: 1px solid var(--edge);
+    border-radius: 9px;
+    background: var(--surface);
   }
   .tag {
-    color: #6e747c;
-    font-size: 11px;
+    margin-left: 8px;
+    color: var(--ink-faint);
+    font-family: var(--display);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
-  .ghost {
-    padding: 6px 14px;
-    border: 1px solid #2f3540;
-    border-radius: 6px;
-    background: transparent;
-    color: #e8eaed;
-    font: inherit;
-    font-size: 12px;
-    cursor: pointer;
-    min-width: 84px;
-  }
-  .ghost:hover:not(:disabled) {
-    background: #1d2127;
-  }
-  .ghost:disabled {
-    opacity: 0.6;
-    cursor: default;
-  }
-  .ghost.muted {
-    border-color: #7a4a12;
-    color: #ff9e0a;
-  }
-  .bar {
+  .progress {
     height: 3px;
-    margin-top: 8px;
+    margin-top: 9px;
     border-radius: 2px;
-    background: #1d2127;
+    background: var(--surface-lift);
     overflow: hidden;
   }
-  .bar span {
+  .progress span {
     display: block;
     height: 100%;
-    background: #4f8cff;
+    background: var(--accent);
     transition: width 200ms linear;
   }
 
-  input[type="range"] {
-    width: 100%;
-    accent-color: #4f8cff;
+  /* ---- dock ---- */
+  .dock {
+    position: relative;
+    z-index: 4;
+    display: flex;
+    align-items: center;
+    gap: 22px;
+    height: 110px;
+    padding: 0 20px;
+    flex: none;
+    border-top: 1px solid var(--edge);
+    background: rgba(255, 255, 255, 0.02);
   }
-  input[type="range"]:disabled {
-    opacity: 0.4;
+  .middle {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
   }
-  select {
-    width: 100%;
-    padding: 8px;
-    border: 1px solid #24282e;
-    border-radius: 8px;
-    background: #14171b;
-    color: inherit;
-    font: inherit;
-  }
-  .hint {
-    margin: 8px 0 0;
-    color: #6e747c;
-    font-size: 11px;
-    line-height: 1.5;
-  }
-  .check {
+  .right {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 3px 0;
-    font-size: 13px;
-    cursor: pointer;
-  }
-  .check input {
-    accent-color: #4f8cff;
   }
 
-  footer {
-    border-top: 1px solid #1d2127;
-    padding-top: 16px;
-  }
-  .transport {
+  .segmented {
+    position: relative;
     display: flex;
-    align-items: center;
-    gap: 20px;
+    gap: 2px;
+    padding: 4px;
+    border: 1px solid var(--edge);
+    border-radius: 11px;
+    background: var(--surface);
+    max-width: 330px;
   }
-  .primary {
-    padding: 10px 28px;
+  /* The indicator overshoots and settles rather than sliding linearly — the
+     one place the dock borrows the blob's physics. */
+  .pill {
+    position: absolute;
+    top: 4px;
+    bottom: 4px;
+    left: 4px;
+    width: calc((100% - 8px) / 3);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
+    transform: translateX(calc(var(--i) * 100%));
+    transition: transform 460ms cubic-bezier(0.32, 1.45, 0.46, 1);
+  }
+  .segmented button {
+    position: relative;
+    z-index: 1;
+    flex: 1;
+    padding: 8px 6px;
     border: 0;
     border-radius: 8px;
-    background: #2b64d9;
-    color: #fff;
-    font: inherit;
-    font-weight: 600;
+    background: transparent;
+    color: var(--ink-dim);
+    font-family: var(--display);
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
     cursor: pointer;
+    transition: color 200ms ease;
   }
-  .primary:hover {
-    background: #3a72e6;
+  .segmented button:hover:not(:disabled) {
+    color: var(--ink);
+  }
+  .segmented button.on {
+    color: var(--ink);
+  }
+  .segmented button:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
   }
 
-  .live {
+  .pace {
     display: flex;
     align-items: center;
     gap: 12px;
+    max-width: 330px;
   }
-  .dot {
+  .pace .label {
+    margin: 0;
+    white-space: nowrap;
+  }
+  .pace-note {
+    margin: 0;
+    color: var(--ink-faint);
+    font-size: 11.5px;
+  }
+
+  .action {
+    padding: 8px 15px;
+    border: 1px solid var(--edge);
+    border-radius: 9px;
+    background: var(--surface);
+    color: var(--ink-dim);
+    font-family: var(--display);
+    font-size: 11.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition:
+      background 160ms ease,
+      color 160ms ease,
+      transform 320ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .action:hover:not(:disabled) {
+    background: var(--surface-lift);
+    color: var(--ink);
+    transform: translateY(-1px);
+  }
+  .action:active:not(:disabled) {
+    transform: translateY(0) scale(0.97);
+  }
+  .action:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .action.on {
+    background: color-mix(in srgb, var(--accent) 20%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+    color: var(--ink);
+  }
+  .action.warn {
+    border-color: #7a4a12;
+    color: #ff9e0a;
+  }
+
+  .readout {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-right: 4px;
+  }
+  .tally {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #3a3f47;
-    transition: background 120ms;
+    background: var(--ink-faint);
+    transition:
+      background 140ms ease,
+      box-shadow 140ms ease;
   }
-  .dot.on {
-    background: #33d64a;
+  .tally.live {
+    background: var(--accent);
+    box-shadow: 0 0 12px var(--accent);
   }
-  .wave {
-    width: 120px;
-    height: 4px;
-    border-radius: 2px;
-    background: #1d2127;
-    overflow: hidden;
+  .tally.muted {
+    background: #ff9e0a;
+    box-shadow: none;
   }
-  .wave span {
-    display: block;
-    height: 100%;
-    background: #4f8cff;
-    transition: width 60ms linear;
-  }
-  .counter {
-    color: #6e747c;
-    font-size: 12px;
+  .count {
+    font-family: var(--display);
+    font-size: 15px;
     font-variant-numeric: tabular-nums;
+    color: var(--ink);
+  }
+  .count i {
+    font-style: normal;
+    font-size: 12px;
+    color: var(--ink-faint);
   }
 
-  .status {
-    margin: 12px 0 0;
-    font-size: 12px;
-    color: #8b9098;
+  button:focus-visible,
+  input:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
-  .status.warn {
-    color: #ff9e0a;
+
+  @media (prefers-reduced-motion: reduce) {
+    .pill,
+    .panel,
+    .action,
+    .chips button,
+    .swatch {
+      transition-duration: 1ms;
+    }
   }
 </style>

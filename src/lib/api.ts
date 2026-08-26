@@ -194,3 +194,13 @@ export const setClickThrough = (enabled: boolean) =>
 /** Resolves to whether Windows accepted the request — needs 10 2004+. */
 export const setHideFromCapture = (enabled: boolean) =>
   invoke<boolean>("set_hide_from_capture", { enabled });
+
+export type BackdropKind = "mica" | "blur" | "none";
+
+/**
+ * Which desktop backdrop the compositor gave the main window.
+ *
+ * `"none"` means the frameless window is transparent with nothing behind it,
+ * so the UI has to paint an opaque background rather than show the desktop.
+ */
+export const windowBackdrop = () => invoke<BackdropKind>("window_backdrop");

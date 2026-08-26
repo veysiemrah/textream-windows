@@ -16,12 +16,15 @@
         "label": "main",
         "title": "Textream",
         "url": "index.html",
-        "width": 980,
-        "height": 720,
-        "minWidth": 720,
-        "minHeight": 520,
+        "width": 1000,
+        "height": 760,
+        "minWidth": 760,
+        "minHeight": 560,
         "resizable": true,
-        "center": true
+        "center": true,
+        "decorations": false,
+        "transparent": true,
+        "shadow": true
       },
       {
         "label": "overlay",

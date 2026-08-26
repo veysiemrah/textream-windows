@@ -34,6 +34,9 @@ sherpa-rs = { version = "0.6", default-features = false, features = [
 # Model downloads. Small, blocking, and already in the dependency graph.
 ureq = "2"
 
+# DWM backdrop effects for the frameless main window.
+window-vibrancy = "0.8"
+
 windows = { version = "0.62", features = [
   "Win32_Foundation",
   "Win32_UI_WindowsAndMessaging",
