@@ -88,6 +88,7 @@ Today we are shipping something I have wanted for a long time.
   let wordProgress = $state(0);
 
   let models = $state<ModelStatus[]>([]);
+  let bindings = $state<[string, string][]>([]);
   let downloading = $state(false);
   let downloadPercent = $state(0);
 
@@ -147,14 +148,29 @@ Today we are shipping something I have wanted for a long time.
 
   onMount(() => {
     void restore();
-    const unlisten = listen<DownloadProgress>(api.EVENT_DOWNLOAD, (event) => {
-      const { received, total } = event.payload;
-      downloadPercent = total > 0 ? (received / total) * 100 : 0;
-    });
+    const unlisten = Promise.all([
+      listen<DownloadProgress>(api.EVENT_DOWNLOAD, (event) => {
+        const { received, total } = event.payload;
+        downloadPercent = total > 0 ? (received / total) * 100 : 0;
+      }),
+      // Shortcuts route through the same handlers the buttons use, so a
+      // hands-free start behaves exactly like a clicked one.
+      listen<api.ShortcutAction>(api.EVENT_SHORTCUT, (event) => {
+        void onShortcut(event.payload);
+      }),
+    ]);
     return () => {
-      void unlisten.then((off) => off());
+      void unlisten.then((offs) => offs.forEach((off) => off()));
     };
   });
+
+  async function onShortcut(action: api.ShortcutAction) {
+    if (action === "toggle") return toggleRun();
+    // Hold and mute mean nothing when nothing is running.
+    if (!running) return;
+    if (action === "hold") return togglePause();
+    if (action === "mute" && needsMicrophone) return toggleMute();
+  }
 
   async function restore() {
     try {
@@ -163,6 +179,7 @@ Today we are shipping something I have wanted for a long time.
       // A first run has no script; the sample is more use than a blank page.
       settings = { ...stored, script: stored.script || SAMPLE };
       models = await api.speechModels();
+      bindings = await api.shortcutBindings();
       settings.modelId ??= models[0]?.id ?? null;
     } catch (error) {
       say(`Could not read your settings: ${error}`, "warn");
@@ -486,6 +503,24 @@ Today we are shipping something I have wanted for a long time.
           Clicks cannot both pass through and land on the prompter. Turn this
           off to click a word and jump there.
         </p>
+      </section>
+
+      <section>
+        <h2>Shortcuts</h2>
+        {#if bindings.length > 0}
+          <dl class="keys">
+            {#each bindings as [name, keys] (keys)}
+              <dt>{name}</dt>
+              <dd><kbd>{keys}</kbd></dd>
+            {/each}
+          </dl>
+          <p class="note">
+            These work while another app has focus, so you can start and hold a
+            take without leaving the camera.
+          </p>
+        {:else}
+          <p class="note">No shortcuts are registered.</p>
+        {/if}
       </section>
 
       <section>
@@ -857,6 +892,33 @@ Today we are shipping something I have wanted for a long time.
     border-color: color-mix(in srgb, var(--accent) 45%, transparent);
     color: var(--ink);
     transform: translateY(-1px);
+  }
+
+  .keys {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 7px 12px;
+    margin: 0;
+    align-items: center;
+  }
+  .keys dt {
+    font-size: 13px;
+    color: var(--ink-dim);
+  }
+  .keys dd {
+    margin: 0;
+  }
+  kbd {
+    display: inline-block;
+    padding: 3px 8px;
+    border: 1px solid var(--edge);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--ink);
+    font-family: var(--display);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
   }
 
   .swatches {

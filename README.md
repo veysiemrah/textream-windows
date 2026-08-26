@@ -219,7 +219,7 @@ cargo test --workspace
 - [ ] Pause, resume, and mute from the overlay
 - [ ] Tap a word to jump; scroll to catch up
 - [ ] `.textream` files
-- [ ] Global shortcuts
+- [x] Global shortcuts — start, hold and mute without leaving the camera
 - [ ] Update check
 
 ### Deliberately out of scope

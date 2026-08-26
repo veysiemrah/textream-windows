@@ -12,6 +12,7 @@ mod model;
 mod overlay;
 mod session;
 mod settings;
+mod shortcuts;
 mod speech;
 mod window_effects;
 
@@ -209,6 +210,15 @@ fn jump_to_offset(
 /// The UI needs this because a frameless transparent window with no effect
 /// applied shows the desktop straight through — it has to paint an opaque
 /// background instead of looking broken.
+/// The global shortcuts and the keys they are bound to.
+#[tauri::command]
+fn shortcut_bindings() -> Vec<(String, String)> {
+    shortcuts::described()
+        .into_iter()
+        .map(|(name, keys)| (name.to_string(), keys.to_string()))
+        .collect()
+}
+
 #[tauri::command]
 fn window_backdrop(state: tauri::State<'_, BackdropState>) -> Backdrop {
     *state.0.lock().unwrap()
@@ -352,6 +362,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(shortcuts::plugin())
         .manage(SessionState::new())
         .manage(AudioState::default())
         .manage(BackdropState(Mutex::new(Backdrop::None)))
@@ -362,6 +373,11 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 let applied = backdrop::apply(&window);
                 *app.state::<BackdropState>().0.lock().unwrap() = applied;
+            }
+
+            let refused = shortcuts::register(&handle);
+            if !refused.is_empty() {
+                eprintln!("shortcuts already taken: {}", refused.join(", "));
             }
 
             if let Some(window) = app.get_webview_window(OVERLAY) {
@@ -388,6 +404,7 @@ pub fn run() {
             jump_to_word,
             jump_to_offset,
             window_backdrop,
+            shortcut_bindings,
             load_settings,
             save_settings,
             speech_models,

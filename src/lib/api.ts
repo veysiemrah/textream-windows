@@ -204,3 +204,11 @@ export type BackdropKind = "mica" | "blur" | "none";
  * so the UI has to paint an opaque background rather than show the desktop.
  */
 export const windowBackdrop = () => invoke<BackdropKind>("window_backdrop");
+
+export type ShortcutAction = "toggle" | "hold" | "mute";
+
+export const EVENT_SHORTCUT = "textream://shortcut";
+
+/** Global shortcut names paired with the keys they are bound to. */
+export const shortcutBindings = () =>
+  invoke<[string, string][]>("shortcut_bindings");
