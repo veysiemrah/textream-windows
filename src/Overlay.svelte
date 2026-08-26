@@ -153,6 +153,14 @@
     padding: 14px 20px 10px;
     border-radius: 18px;
     background: rgba(10, 11, 13, var(--bg-opacity));
+    /* This is a display, not a document: a drag across the words should
+       scrub the wheel-driven catch-up, not paint a text selection over the
+       highlight. `cursor: default` keeps the pointer from suggesting text is
+       there to select in the first place; `.word` overrides it back to a
+       pointer where a click actually does something. */
+    -webkit-user-select: none;
+    user-select: none;
+    cursor: default;
     /* Mica and Acrylic are unavailable to a transparent WebView2 surface, so
        the frosted look is done in CSS against whatever shows through. */
     backdrop-filter: blur(20px) saturate(140%);
