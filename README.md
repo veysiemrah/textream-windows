@@ -88,8 +88,10 @@ src-tauri/              Windows shell
 ├── audio.rs            Microphone capture and the speech worker
 ├── speech.rs           Streaming recogniser over the sherpa-onnx C API
 ├── model.rs            Model registry and first-run download
+├── document.rs         .textream file format — read/write, macOS-compatible
 ├── backdrop.rs         Mica or blur behind the frameless window
 ├── settings.rs         Persisted preferences
+├── shortcuts.rs        Global shortcuts for hands-free control
 ├── session.rs          Live session state and the webview-facing DTOs
 └── lib.rs              Commands, events, tray icon
 
@@ -98,7 +100,7 @@ src/                    Svelte UI
 ├── Chrome.svelte       Title bar and resize grips for the frameless window
 ├── LiquidStart.svelte  The voice-reactive transport control
 ├── Overlay.svelte      The prompter pill
-└── lib/                Typed command wrappers, spring integrator
+└── lib/                Typed command wrappers, spring integrator, file dialogs
 ```
 
 The engine deliberately knows nothing about Windows. That keeps it testable
@@ -164,6 +166,23 @@ job; the app already handles everything after it.
 Adding a language is a few lines in [`model.rs`](src-tauri/src/model.rs) and a
 published model to point at.
 
+## Script files
+
+`.textream` files are the same format the macOS app writes: a JSON array of
+page strings, nothing else. A script saved on one platform opens cleanly on
+the other — the format was kept exactly as-is rather than inventing a Windows
+one, since there was no reason to diverge from something this simple.
+
+Multi-page scripts are out of scope here (see the roadmap), so opening a file
+with more than one page flattens them into the single script this app edits,
+each former page separated by a blank line. Nothing is dropped — a script
+written on a Mac with several pages still opens here in full, just without the
+page boundaries.
+
+The script itself is always autosaved as part of your settings, so `.textream`
+files are for moving a script between machines or sharing it with someone
+else, not the only copy of anything.
+
 ## Building
 
 Requires:
@@ -218,8 +237,9 @@ cargo test --workspace
 - [x] Font, size, colour and opacity
 - [x] Pause, hold, and mute from the transport dock
 - [x] Tap a word to jump; scroll to catch up
-- [ ] `.textream` files
+- [x] `.textream` files — the same format the macOS app writes
 - [x] Global shortcuts — start, hold and mute without leaving the camera
+- [x] First-run welcome, and error messages that say what to do
 - [ ] Update check
 
 ### Deliberately out of scope

@@ -232,3 +232,27 @@ export interface SpeechDiagnostics {
 
 export const speechDiagnostics = () =>
   invoke<SpeechDiagnostics>("speech_diagnostics");
+
+/**
+ * The `.textream` extension, without the leading dot.
+ *
+ * Read from Rust rather than hardcoded here, so the string exists in exactly
+ * one place instead of duplicated across the IPC boundary.
+ */
+export const scriptFileExtension = () =>
+  invoke<string>("script_file_extension");
+
+/**
+ * Writes `text` as a `.textream` file at `path`.
+ *
+ * `path` comes from the native save dialog (see `lib/files.ts`), not from
+ * this module — the dialog is a webview concern, the file format is a Rust
+ * one, and keeping that split means the format can be unit-tested without a
+ * window.
+ */
+export const saveScriptFile = (path: string, text: string) =>
+  invoke<void>("save_script_file", { path, text });
+
+/** Reads a `.textream` file at `path`, flattened to one script. */
+export const openScriptFile = (path: string) =>
+  invoke<string>("open_script_file", { path });

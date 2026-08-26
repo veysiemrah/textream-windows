@@ -8,6 +8,7 @@
 
 mod audio;
 mod backdrop;
+mod document;
 mod model;
 mod overlay;
 mod session;
@@ -230,6 +231,32 @@ fn shortcut_bindings() -> Vec<(String, String)> {
         .collect()
 }
 
+/// The file extension `.textream` files use, without the leading dot.
+///
+/// Read by the frontend when it builds the save/open dialog's filter, so the
+/// extension is written in exactly one place rather than duplicated as a
+/// string literal on both sides of the IPC boundary.
+#[tauri::command]
+fn script_file_extension() -> &'static str {
+    document::EXTENSION
+}
+
+/// Writes the script to a `.textream` file at `path`.
+///
+/// The dialog itself is chosen in the frontend, through `@tauri-apps/plugin-dialog`
+/// — this command only owns the file format, matching the split the macOS app
+/// makes between its `NSSavePanel` and `saveToURL`.
+#[tauri::command]
+fn save_script_file(path: String, text: String) -> Result<(), String> {
+    document::save(std::path::Path::new(&path), &text)
+}
+
+/// Reads a `.textream` file at `path`, flattened to one script.
+#[tauri::command]
+fn open_script_file(path: String) -> Result<String, String> {
+    document::load(std::path::Path::new(&path))
+}
+
 /// Which backdrop the compositor gave the main window.
 ///
 /// The UI needs this because a frameless transparent window with no effect
@@ -389,6 +416,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(shortcuts::plugin())
         .manage(SessionState::new())
         .manage(AudioState::default())
@@ -432,6 +460,9 @@ pub fn run() {
             jump_to_offset,
             window_backdrop,
             shortcut_bindings,
+            script_file_extension,
+            save_script_file,
+            open_script_file,
             speech_diagnostics,
             is_first_run,
             load_settings,

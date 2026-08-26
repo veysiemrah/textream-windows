@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from "svelte";
   import { listen } from "@tauri-apps/api/event";
   import * as api from "./lib/api";
+  import * as files from "./lib/files";
   import type {
     ColorPreset,
     DownloadProgress,
@@ -247,6 +248,27 @@ Today we are shipping something I have wanted for a long time.
     }
   }
 
+  async function saveScriptToFile() {
+    try {
+      const saved = await files.saveScript(settings.script);
+      if (saved) say("Script saved.");
+    } catch (error) {
+      say(`Could not save the script: ${error}`, "warn");
+    }
+  }
+
+  async function openScriptFromFile() {
+    try {
+      const loaded = await files.openScript(settings.script);
+      if (loaded === null) return;
+      settings.script = loaded;
+      persist();
+      say("Script loaded.");
+    } catch (error) {
+      say(`Could not open that file: ${error}`, "warn");
+    }
+  }
+
   async function toggleRun() {
     // start() and stop() both open or release a microphone and a model, which
     // take real time to settle. Without this guard, a second click before the
@@ -428,6 +450,10 @@ Today we are shipping something I have wanted for a long time.
         <span class="sep"></span>
         <span class="status" class:warn={statusKind === "warn"}>{status}</span>
       {/if}
+      <div class="file-actions">
+        <button onclick={openScriptFromFile}>Open…</button>
+        <button onclick={saveScriptToFile}>Save as…</button>
+      </div>
     </div>
 
     {#if diagnostics}
@@ -886,6 +912,25 @@ Today we are shipping something I have wanted for a long time.
   }
   .status.warn {
     color: #ff9e0a;
+  }
+
+  .file-actions {
+    display: flex;
+    gap: 14px;
+    margin-left: auto;
+  }
+  .file-actions button {
+    border: 0;
+    padding: 0;
+    background: none;
+    color: var(--ink-faint);
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    cursor: pointer;
+  }
+  .file-actions button:hover {
+    color: var(--ink);
   }
 
   .heard {
