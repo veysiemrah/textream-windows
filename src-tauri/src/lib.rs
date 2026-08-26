@@ -400,8 +400,16 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &hide, &quit])?;
 
+    // Configured in tauri.conf.json, so this is always `Some` today — but a
+    // missing icon should fail setup cleanly through the existing `?` chain
+    // rather than panic and take the whole app down with it.
+    let icon = app
+        .default_window_icon()
+        .cloned()
+        .ok_or_else(|| tauri::Error::AssetNotFound("default window icon".into()))?;
+
     TrayIconBuilder::with_id("textream")
-        .icon(app.default_window_icon().unwrap().clone())
+        .icon(icon)
         .tooltip("Textream")
         .menu(&menu)
         // The menu still opens on right-click regardless of this setting; it
