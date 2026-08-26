@@ -116,6 +116,8 @@ without a microphone and without launching the app.
 | Clicks pass through to OBS | `WS_EX_TRANSPARENT` |
 | Invisible to screen share | `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)`, needs Windows 10 2004+ |
 | Sits above the taskbar | Plain always-on-top window, **not** a registered AppBar — an AppBar shrinks every maximised window and leaves the work area wrong if the app dies |
+| Never runs twice | `tauri-plugin-single-instance`, registered first — a second launch just refocuses the first |
+| Closing tucks the editor away | `CloseRequested` intercepted on the main window only; the overlay and any running session are untouched |
 
 ### The three guidance modes
 
