@@ -23,6 +23,14 @@
 > recognition covers several languages but not Turkish yet — see
 > [Languages](#languages).
 
+<p align="center">
+  <img src="docs/screenshots/editor.png" alt="The Textream editor, with a script loaded and the transport dock showing Word Tracking, Classic and Voice-Activated modes" width="700">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/prompter.png" alt="The prompter overlay, highlighting the current word and cue while the script scrolls" width="500">
+</p>
+
 ## The original
 
 [**Textream**](https://github.com/f/textream) is a free, open-source macOS
