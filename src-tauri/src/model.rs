@@ -330,4 +330,57 @@ mod tests {
         directories.dedup();
         assert_eq!(directories.len(), count, "two models share a directory");
     }
+
+    /// Downloads the default model over a real network connection.
+    ///
+    /// Every other test in this module exercises the bookkeeping around a
+    /// download without ever making one — the URL, the `.part` rename, the
+    /// progress callback are all tested against a filesystem, never against
+    /// Hugging Face. This is the one place that calls `ureq` for real, which
+    /// is the only way to know the TLS setup and the URL format actually work
+    /// against the service they are pointed at, rather than just against each
+    /// other.
+    ///
+    /// Ignored by default — real network access, and ~44 MB — but this is
+    /// exactly the code path "Download" runs in the app, unlike the FFI smoke
+    /// test in speech.rs, which is handed a model fetched some other way.
+    #[test]
+    #[ignore = "downloads ~44 MB over a real network connection"]
+    fn the_default_model_downloads_and_installs_for_real() {
+        let root = temp_root_for_download();
+        let model = default_model();
+
+        let mut progress_seen = false;
+        let mut final_progress = DownloadProgress {
+            received: 0,
+            total: 0,
+        };
+        download(&root, model, |progress| {
+            progress_seen = true;
+            final_progress = progress;
+        })
+        .expect("a real download of the default model should succeed");
+
+        assert!(progress_seen, "the progress callback should fire at least once");
+        assert!(
+            final_progress.received > 0,
+            "should report having received bytes"
+        );
+
+        let paths = paths(&root, model);
+        assert!(paths.all_present(), "all four files should be on disk");
+        assert!(
+            fs::metadata(&paths.encoder).unwrap().len() > 1_000_000,
+            "the encoder should not be a truncated stub"
+        );
+        assert!(status(&root, model).installed);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    fn temp_root_for_download() -> PathBuf {
+        let root = std::env::temp_dir().join("textream-model-download-test");
+        let _ = fs::remove_dir_all(&root);
+        root
+    }
 }
