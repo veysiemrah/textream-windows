@@ -212,3 +212,15 @@ export const EVENT_SHORTCUT = "textream://shortcut";
 /** Global shortcut names paired with the keys they are bound to. */
 export const shortcutBindings = () =>
   invoke<[string, string][]>("shortcut_bindings");
+
+export interface SpeechDiagnostics {
+  /** Audio the decoder could not keep up with. Should stay at zero. */
+  droppedChunks: number;
+  decodes: number;
+  /** What the recogniser last transcribed, before any script matching. */
+  heard: string;
+  inputFormat: string;
+}
+
+export const speechDiagnostics = () =>
+  invoke<SpeechDiagnostics>("speech_diagnostics");

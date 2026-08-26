@@ -23,7 +23,7 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
-use audio::AudioEngine;
+use audio::{AudioEngine, DiagnosticsView};
 use backdrop::Backdrop;
 use model::{DownloadProgress, ModelStatus};
 use overlay::Geometry;
@@ -210,6 +210,22 @@ fn jump_to_offset(
 /// The UI needs this because a frameless transparent window with no effect
 /// applied shows the desktop straight through — it has to paint an opaque
 /// background instead of looking broken.
+/// What the capture path is doing right now.
+///
+/// Words going missing because audio was dropped and words going missing
+/// because the model is weak look the same from the outside. This is what
+/// separates them.
+#[tauri::command]
+fn speech_diagnostics(audio: tauri::State<'_, AudioState>) -> DiagnosticsView {
+    audio
+        .0
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|engine| engine.diagnostics())
+        .unwrap_or_default()
+}
+
 /// The global shortcuts and the keys they are bound to.
 #[tauri::command]
 fn shortcut_bindings() -> Vec<(String, String)> {
@@ -405,6 +421,7 @@ pub fn run() {
             jump_to_offset,
             window_backdrop,
             shortcut_bindings,
+            speech_diagnostics,
             load_settings,
             save_settings,
             speech_models,

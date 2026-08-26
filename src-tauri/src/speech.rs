@@ -181,15 +181,35 @@ impl Recognizer {
         }
     }
 
-    /// Decodes whatever is ready and reports the transcript so far.
-    pub fn poll(&mut self) -> Update {
-        // SAFETY: both handles are non-null for the lifetime of `self`, and
-        // the result pointer is destroyed before it goes out of scope.
+    /// Runs the network over whatever audio has accumulated.
+    ///
+    /// Returns whether anything was actually decoded. A transducer only has
+    /// work once a full chunk of frames has arrived — roughly three times a
+    /// second — while audio callbacks arrive around a hundred times a second,
+    /// so most calls decode nothing and the caller should not pay to re-read a
+    /// transcript that cannot have changed.
+    pub fn decode(&mut self) -> bool {
+        let mut decoded = false;
+        // SAFETY: both handles are non-null for the lifetime of `self`.
         unsafe {
             while sys::SherpaOnnxIsOnlineStreamReady(self.recognizer, self.stream) == 1 {
                 sys::SherpaOnnxDecodeOnlineStream(self.recognizer, self.stream);
+                decoded = true;
             }
+        }
+        decoded
+    }
 
+    /// Reads the transcript decoded so far.
+    ///
+    /// Allocates and copies the whole string, so it is worth calling only when
+    /// [`decode`] reported progress.
+    ///
+    /// [`decode`]: Recognizer::decode
+    pub fn result(&mut self) -> Update {
+        // SAFETY: both handles are non-null for the lifetime of `self`, and
+        // the result pointer is destroyed before it goes out of scope.
+        unsafe {
             let result = sys::SherpaOnnxGetOnlineStreamResult(self.recognizer, self.stream);
             let text = if result.is_null() {
                 String::new()
@@ -294,7 +314,8 @@ mod tests {
         // before the trailing-silence rule is satisfied.
         let silence = vec![0.0f32; MODEL_SAMPLE_RATE as usize * 2];
         recognizer.accept(MODEL_SAMPLE_RATE as u32, &silence);
-        let update = recognizer.poll();
+        assert!(recognizer.decode(), "two seconds of audio should decode");
+        let update = recognizer.result();
         assert!(
             update.text.trim().is_empty(),
             "silence decoded to {:?}",
@@ -307,9 +328,10 @@ mod tests {
             .map(|i| (i as f32 * 0.05).sin() * 0.2)
             .collect();
         recognizer.accept(MODEL_SAMPLE_RATE as u32, &tone);
-        let _ = recognizer.poll();
+        recognizer.decode();
+        let _ = recognizer.result();
 
         recognizer.reset();
-        assert!(recognizer.poll().text.trim().is_empty());
+        assert!(recognizer.result().text.trim().is_empty());
     }
 }

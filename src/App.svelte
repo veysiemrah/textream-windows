@@ -89,11 +89,13 @@ Today we are shipping something I have wanted for a long time.
 
   let models = $state<ModelStatus[]>([]);
   let bindings = $state<[string, string][]>([]);
+  let diagnostics = $state<api.SpeechDiagnostics | null>(null);
   let downloading = $state(false);
   let downloadPercent = $state(0);
 
   let frame = 0;
   let lastFrameTime = 0;
+  let lastDiagnostics = 0;
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
   const selectedModel = $derived(
@@ -269,6 +271,7 @@ Today we are shipping something I have wanted for a long time.
     cancelAnimationFrame(frame);
     level = 0;
     voiceActive = false;
+    diagnostics = null;
     await api.stopSession();
     await api.hideOverlay();
   }
@@ -289,6 +292,13 @@ Today we are shipping something I have wanted for a long time.
 
     const progress = await api.tick(delta);
     level = progress.level;
+
+    // Follow mode is the only one that transcribes, and a second-by-second
+    // poll is plenty for numbers a person reads.
+    if (settings.mode === "wordTracking" && now - lastDiagnostics > 700) {
+      lastDiagnostics = now;
+      diagnostics = await api.speechDiagnostics();
+    }
     voiceActive = progress.voiceActive;
     wordProgress = progress.wordProgress;
 
@@ -359,6 +369,20 @@ Today we are shipping something I have wanted for a long time.
         <span class="status" class:warn={statusKind === "warn"}>{status}</span>
       {/if}
     </div>
+
+    {#if diagnostics}
+      <!-- Follow mode only. Seeing what the recogniser actually heard is the
+           difference between "it does not work" and a fixable problem. -->
+      <div class="heard" class:starved={diagnostics.droppedChunks > 0}>
+        <span class="heard-label">Heard</span>
+        <span class="heard-text">{diagnostics.heard || "…"}</span>
+        {#if diagnostics.droppedChunks > 0}
+          <span class="heard-warn"
+            >{diagnostics.droppedChunks} audio chunks dropped</span
+          >
+        {/if}
+      </div>
+    {/if}
   </main>
 
   <aside class="panel" class:open={panelOpen} aria-hidden={!panelOpen}>
@@ -762,6 +786,46 @@ Today we are shipping something I have wanted for a long time.
     letter-spacing: 0.02em;
   }
   .status.warn {
+    color: #ff9e0a;
+  }
+
+  .heard {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 8px 2px 10px;
+    border-top: 1px solid var(--edge);
+    min-width: 0;
+  }
+  .heard-label {
+    font-family: var(--display);
+    font-size: 10.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    flex: none;
+  }
+  .heard-text {
+    flex: 1;
+    min-width: 0;
+    color: var(--ink-dim);
+    font-size: 12.5px;
+    font-style: italic;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    direction: rtl;
+    text-align: left;
+  }
+  .heard-warn {
+    flex: none;
+    color: #ff9e0a;
+    font-family: var(--display);
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .heard.starved .heard-label {
     color: #ff9e0a;
   }
 
