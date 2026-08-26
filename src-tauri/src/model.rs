@@ -361,7 +361,10 @@ mod tests {
         })
         .expect("a real download of the default model should succeed");
 
-        assert!(progress_seen, "the progress callback should fire at least once");
+        assert!(
+            progress_seen,
+            "the progress callback should fire at least once"
+        );
         assert!(
             final_progress.received > 0,
             "should report having received bytes"

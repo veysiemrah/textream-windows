@@ -24,6 +24,7 @@
     "core:webview:default",
     "opener:default",
     "dialog:default",
-    "dialog:allow-confirm"
+    "dialog:allow-confirm",
+    "notification:default"
   ]
 }

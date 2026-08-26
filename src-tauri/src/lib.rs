@@ -451,6 +451,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(shortcuts::plugin())
+        .plugin(tauri_plugin_notification::init())
         .manage(SessionState::new())
         .manage(AudioState::default())
         .manage(BackdropState(Mutex::new(Backdrop::None)))

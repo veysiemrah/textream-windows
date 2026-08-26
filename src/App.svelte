@@ -3,6 +3,7 @@
   import { listen } from "@tauri-apps/api/event";
   import * as api from "./lib/api";
   import * as files from "./lib/files";
+  import * as notify from "./lib/notify";
   import type {
     ColorPreset,
     DownloadProgress,
@@ -156,6 +157,7 @@ Today we are shipping something I have wanted for a long time.
 
   onMount(() => {
     void restore();
+    void notify.init();
     const unlisten = Promise.all([
       listen<DownloadProgress>(api.EVENT_DOWNLOAD, (event) => {
         const { received, total } = event.payload;
@@ -173,7 +175,7 @@ Today we are shipping something I have wanted for a long time.
   });
 
   async function onShortcut(action: api.ShortcutAction) {
-    if (action === "toggle") return toggleRun();
+    if (action === "toggle") return toggleRun(true);
     // Hold and mute mean nothing when nothing is running.
     if (!running) return;
     if (action === "hold") return togglePause();
@@ -269,7 +271,7 @@ Today we are shipping something I have wanted for a long time.
     }
   }
 
-  async function toggleRun() {
+  async function toggleRun(viaShortcut = false) {
     // start() and stop() both open or release a microphone and a model, which
     // take real time to settle. Without this guard, a second click before the
     // first finishes would race two attempts against the same device — the
@@ -279,15 +281,26 @@ Today we are shipping something I have wanted for a long time.
     transitioning = true;
     try {
       if (running) await stop();
-      else await start();
+      else await start(viaShortcut);
     } finally {
       transitioning = false;
     }
   }
 
-  async function start() {
+  /**
+   * @param viaShortcut Also raises a toast on failure. Set when this run
+   * started from the global shortcut rather than a click, since that is the
+   * one path where the editor window — and the inline status message in it —
+   * can be sitting hidden in the tray while this fails.
+   */
+  async function start(viaShortcut = false) {
+    const fail = (message: string) => {
+      say(message, "warn");
+      if (viaShortcut) notify.notifyWarning(message);
+    };
+
     if (settings.script.trim() === "") {
-      say("Nothing to read — paste a script first.", "warn");
+      fail("Nothing to read — paste a script first.");
       return;
     }
 
@@ -304,7 +317,7 @@ Today we are shipping something I have wanted for a long time.
         settings.mode === "wordTracking" ? settings.modelId : null,
       );
     } catch (error) {
-      say(String(error), "warn");
+      fail(String(error));
       return;
     }
 
@@ -709,7 +722,7 @@ Today we are shipping something I have wanted for a long time.
       {level}
       listening={needsMicrophone && !muted}
       disabled={transitioning}
-      onclick={toggleRun}
+      onclick={() => toggleRun()}
     />
 
     <div class="middle">

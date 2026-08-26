@@ -92,6 +92,7 @@ src-tauri/              Windows shell
 ├── backdrop.rs         Mica or blur behind the frameless window
 ├── settings.rs         Persisted preferences
 ├── shortcuts.rs        Global shortcuts for hands-free control
+├── diagnostics.rs      Crash and background-error logging
 ├── session.rs          Live session state and the webview-facing DTOs
 └── lib.rs              Commands, events, tray icon
 
@@ -100,7 +101,7 @@ src/                    Svelte UI
 ├── Chrome.svelte       Title bar and resize grips for the frameless window
 ├── LiquidStart.svelte  The voice-reactive transport control
 ├── Overlay.svelte      The prompter pill
-└── lib/                Typed command wrappers, spring integrator, file dialogs
+└── lib/                Typed command wrappers, spring integrator, file dialogs, toasts
 ```
 
 The engine deliberately knows nothing about Windows. That keeps it testable
@@ -240,6 +241,9 @@ cargo test --workspace
 - [x] `.textream` files — the same format the macOS app writes
 - [x] Global shortcuts — start, hold and mute without leaving the camera
 - [x] First-run welcome, and error messages that say what to do
+- [x] Closes to the tray instead of quitting; a second launch refocuses it
+- [x] A toast when a shortcut-triggered start fails with the window hidden
+- [x] A crash log, since a release build has no console to catch one
 - [ ] Update check
 
 ### Deliberately out of scope
