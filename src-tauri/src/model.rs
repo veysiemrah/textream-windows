@@ -28,22 +28,96 @@ pub struct SpeechModel {
 
 /// Models offered in the UI.
 ///
-/// Only the quantised variants are listed. The float encoder for this model is
-/// 85 MB against 41 MB for int8, and on a task where a fuzzy matcher absorbs
-/// recognition error, the extra 44 MB buys nothing a presenter would notice.
-pub const MODELS: &[SpeechModel] = &[SpeechModel {
-    id: "en-20m",
-    label: "English (small)",
-    language: "en",
-    repo: "csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17",
-    files: ModelFiles {
-        encoder: "encoder-epoch-99-avg-1.int8.onnx",
-        decoder: "decoder-epoch-99-avg-1.int8.onnx",
-        joiner: "joiner-epoch-99-avg-1.int8.onnx",
-        tokens: "tokens.txt",
+/// The macOS app asks the operating system which languages it can transcribe
+/// and offers those. Windows has no equivalent worth using — its own recogniser
+/// covers only English, French, German, Japanese, Mandarin and Spanish — so
+/// this registry plays that role, and a language is available exactly when
+/// somebody has published a streaming model for it.
+///
+/// Quantised weights where the publisher provides them. A float encoder is
+/// typically twice the size, and on a task where a fuzzy matcher absorbs
+/// recognition error it buys nothing a presenter would notice.
+pub const MODELS: &[SpeechModel] = &[
+    SpeechModel {
+        id: "en-20m",
+        label: "English (small)",
+        language: "en",
+        repo: "csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17",
+        files: ModelFiles {
+            encoder: "encoder-epoch-99-avg-1.int8.onnx",
+            decoder: "decoder-epoch-99-avg-1.int8.onnx",
+            joiner: "joiner-epoch-99-avg-1.int8.onnx",
+            tokens: "tokens.txt",
+        },
+        download_bytes: 43_600_000,
     },
-    download_bytes: 43_600_000,
-}];
+    SpeechModel {
+        id: "en",
+        label: "English",
+        language: "en",
+        repo: "csukuangfj/sherpa-onnx-streaming-zipformer-en-kroko-2025-08-06",
+        files: KROKO_FILES,
+        download_bytes: 71_300_000,
+    },
+    SpeechModel {
+        id: "de",
+        label: "German",
+        language: "de",
+        repo: "csukuangfj/sherpa-onnx-streaming-zipformer-de-kroko-2025-08-06",
+        files: KROKO_FILES,
+        download_bytes: 71_300_000,
+    },
+    SpeechModel {
+        id: "fr",
+        label: "French",
+        language: "fr",
+        repo: "csukuangfj/sherpa-onnx-streaming-zipformer-fr-kroko-2025-08-06",
+        files: KROKO_FILES,
+        download_bytes: 71_300_000,
+    },
+    SpeechModel {
+        id: "es",
+        label: "Spanish",
+        language: "es",
+        repo: "csukuangfj/sherpa-onnx-streaming-zipformer-es-kroko-2025-08-06",
+        files: KROKO_FILES,
+        download_bytes: 156_200_000,
+    },
+    SpeechModel {
+        id: "zh",
+        label: "Chinese (Mandarin)",
+        language: "zh",
+        repo: "csukuangfj/sherpa-onnx-streaming-zipformer-multi-zh-hans-int8-2023-12-13",
+        files: ModelFiles {
+            encoder: "encoder-epoch-20-avg-1-chunk-16-left-128.int8.onnx",
+            decoder: "decoder-epoch-20-avg-1-chunk-16-left-128.onnx",
+            joiner: "joiner-epoch-20-avg-1-chunk-16-left-128.int8.onnx",
+            tokens: "tokens.txt",
+        },
+        download_bytes: 76_500_000,
+    },
+    SpeechModel {
+        id: "multi",
+        label: "Arabic, Indonesian, Japanese, Russian, Thai, Vietnamese",
+        language: "multi",
+        repo: "csukuangfj/sherpa-onnx-streaming-zipformer-ar_en_id_ja_ru_th_vi_zh-2025-02-10",
+        files: ModelFiles {
+            encoder: "encoder-epoch-75-avg-11-chunk-16-left-128.int8.onnx",
+            decoder: "decoder-epoch-75-avg-11-chunk-16-left-128.onnx",
+            joiner: "joiner-epoch-75-avg-11-chunk-16-left-128.int8.onnx",
+            tokens: "tokens.txt",
+        },
+        download_bytes: 338_700_000,
+    },
+];
+
+/// The Kroko releases all use the same plain file names.
+const KROKO_FILES: ModelFiles = ModelFiles {
+    encoder: "encoder.onnx",
+    decoder: "decoder.onnx",
+    joiner: "joiner.onnx",
+    tokens: "tokens.txt",
+};
 
 /// The default model, used when the user has expressed no preference.
 pub fn default_model() -> &'static SpeechModel {
@@ -219,5 +293,41 @@ mod tests {
     #[test]
     fn every_status_is_reported() {
         assert_eq!(statuses(Path::new("C:/nowhere")).len(), MODELS.len());
+    }
+
+    #[test]
+    fn every_model_is_completely_described() {
+        for model in MODELS {
+            assert!(!model.label.is_empty(), "{} has no label", model.id);
+            assert!(!model.language.is_empty(), "{} has no language", model.id);
+            assert!(
+                model.repo.contains('/'),
+                "{} needs an owner/name repository",
+                model.id
+            );
+            assert!(
+                model.download_bytes > 1_000_000,
+                "{} reports an implausible size",
+                model.id
+            );
+            for name in [
+                model.files.encoder,
+                model.files.decoder,
+                model.files.joiner,
+                model.files.tokens,
+            ] {
+                assert!(!name.is_empty(), "{} is missing a file name", model.id);
+            }
+        }
+    }
+
+    #[test]
+    fn models_land_in_separate_directories() {
+        let root = Path::new("C:/appdata/textream");
+        let mut directories: Vec<PathBuf> = MODELS.iter().map(|m| directory(root, m)).collect();
+        directories.sort();
+        let count = directories.len();
+        directories.dedup();
+        assert_eq!(directories.len(), count, "two models share a directory");
     }
 }

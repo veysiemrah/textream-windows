@@ -16,7 +16,8 @@
 ---
 
 > **Status: early development.** All three guidance modes work. Speech
-> recognition is English-only so far — see [Speech recognition](#speech-recognition).
+> recognition covers several languages but not Turkish yet — see
+> [Languages](#languages).
 
 ## The original
 
@@ -50,7 +51,7 @@ What carries over is the product and the algorithms, reimplemented in Rust.
 | Cue syntax | `[stage directions]` shown but never spoken | same |
 | Privacy | fully on-device | same, deliberately |
 | Overlay home | Dynamic Island under the notch | pill on the top edge — see below |
-| Speech engine | Apple's recogniser, dozens of languages | sherpa-onnx, English so far |
+| Speech engine | Apple's recogniser, dozens of languages | sherpa-onnx, a handful of downloadable models |
 | Extras | Sidecar, PowerPoint import, remote view, mirror output | out of scope — see below |
 
 ## Design decisions
@@ -87,13 +88,17 @@ src-tauri/              Windows shell
 ├── audio.rs            Microphone capture and the speech worker
 ├── speech.rs           Streaming recogniser over the sherpa-onnx C API
 ├── model.rs            Model registry and first-run download
+├── backdrop.rs         Mica or blur behind the frameless window
+├── settings.rs         Persisted preferences
 ├── session.rs          Live session state and the webview-facing DTOs
 └── lib.rs              Commands, events, tray icon
 
 src/                    Svelte UI
-├── App.svelte          Editor and controls
+├── App.svelte          Editor, settings panel and transport dock
+├── Chrome.svelte       Title bar and resize grips for the frameless window
+├── LiquidStart.svelte  The voice-reactive transport control
 ├── Overlay.svelte      The prompter pill
-└── lib/                Typed command wrappers, microphone metering
+└── lib/                Typed command wrappers, spring integrator
 ```
 
 The engine deliberately knows nothing about Windows. That keeps it testable
@@ -120,8 +125,8 @@ without a microphone and without launching the app.
 ## Speech recognition
 
 Word Tracking runs a streaming Zipformer transducer through sherpa-onnx. The
-model is downloaded on first use (about 42 MB) into the app data directory and
-never ships in the installer.
+model is downloaded on first use into the app data directory and never ships in
+the installer.
 
 `sherpa-rs` only wraps sherpa-onnx's *offline* recogniser, which decodes a
 finished buffer. A teleprompter cannot wait for the presenter to stop talking,
@@ -132,12 +137,32 @@ PCM, and opening the same input device twice — once for WebAudio metering, onc
 for the recogniser — fails on exclusive-mode hardware. One capture path feeds
 both the level meter and the transcriber.
 
-**Only English is available today.** The macOS app gets dozens of languages free
-from Apple's on-device recogniser; there is no equivalent on Windows worth
-using, so each language needs its own model in the registry. Adding one is a
-few lines in [`model.rs`](src-tauri/src/model.rs) plus a published streaming
-model to point at — the limit is which languages sherpa-onnx publishes streaming
-models for, not the app.
+### Languages
+
+The macOS app asks the operating system which languages it can transcribe and
+offers those, which on a Mac is dozens — Apple ships them. Windows cannot be
+asked the same question usefully: its own recogniser covers English, French,
+German, Japanese, Mandarin and Spanish, and nothing else. Copying the
+architecture would mean *fewer* languages, not more.
+
+So the model registry plays that role instead, and a language is available
+exactly when somebody has published a streaming model for it:
+
+| | Size |
+|---|---|
+| English (small) — fastest, the default | 42 MB |
+| English, German, French | 71 MB each |
+| Spanish | 156 MB |
+| Chinese (Mandarin) | 77 MB |
+| Arabic, Indonesian, Japanese, Russian, Thai, Vietnamese (one model) | 339 MB |
+
+**Turkish is not available yet.** A model exists — Kroko publishes a Turkish
+community streaming model — but only in their own packaging, and nobody has
+converted it to the ONNX layout sherpa-onnx loads. That conversion is the whole
+job; the app already handles everything after it.
+
+Adding a language is a few lines in [`model.rs`](src-tauri/src/model.rs) and a
+published model to point at.
 
 ## Building
 
@@ -187,6 +212,8 @@ cargo test --workspace
 - [x] System tray
 - [x] Classic and Voice-Activated modes end to end
 - [x] On-device streaming speech recognition — Word Tracking works
+- [x] A model registry covering several languages
+- [ ] Turkish, once a streaming model is converted for it
 - [ ] Settings that persist across launches
 - [ ] Font, size, colour and opacity
 - [ ] Pause, resume, and mute from the overlay
@@ -194,7 +221,6 @@ cargo test --workspace
 - [ ] `.textream` files
 - [ ] Global shortcuts
 - [ ] Update check
-- [ ] More speech languages in the model registry
 
 ### Deliberately out of scope
 

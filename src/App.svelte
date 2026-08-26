@@ -187,6 +187,19 @@ Today we are shipping something I have wanted for a long time.
     }
   }
 
+  async function removeModel() {
+    if (!selectedModel || downloading || running) return;
+    try {
+      const updated = await api.removeSpeechModel(selectedModel.id);
+      models = models.map((m) => (m.id === updated.id ? updated : m));
+      // Follow mode needs a model; without one it would start and never move.
+      if (settings.mode === "wordTracking") await pushMode("classic");
+      say(`${updated.label} removed.`);
+    } catch (error) {
+      say(`Could not remove the model: ${error}`, "warn");
+    }
+  }
+
   async function toggleRun() {
     if (running) await stop();
     else await start();
@@ -477,30 +490,57 @@ Today we are shipping something I have wanted for a long time.
 
       <section>
         <h2>Speech</h2>
-        {#if selectedModel}
-          <div class="model">
-            <div>
-              <strong>{selectedModel.label}</strong>
-              <span class="tag"
-                >{selectedModel.installed
-                  ? "installed"
-                  : megabytes(selectedModel.downloadBytes)}</span
-              >
+        {#if models.length > 0}
+          <label class="field">
+            <span class="label">Language</span>
+            <select
+              bind:value={settings.modelId}
+              disabled={downloading}
+              onchange={persist}
+            >
+              {#each models as model (model.id)}
+                <option value={model.id}>
+                  {model.label}
+                  {model.installed ? "· ready" : `· ${megabytes(model.downloadBytes)}`}
+                </option>
+              {/each}
+            </select>
+          </label>
+
+          {#if selectedModel}
+            <div class="model">
+              <div>
+                <strong>{selectedModel.label}</strong>
+                <span class="tag"
+                  >{selectedModel.installed
+                    ? "installed"
+                    : megabytes(selectedModel.downloadBytes)}</span
+                >
+              </div>
+              {#if selectedModel.installed}
+                <button
+                  class="action"
+                  disabled={downloading || running}
+                  title={running
+                    ? "Stop the prompter before removing a model"
+                    : "Delete the downloaded files"}
+                  onclick={removeModel}>Remove</button
+                >
+              {:else}
+                <button
+                  class="action"
+                  disabled={downloading}
+                  onclick={downloadModel}
+                >
+                  {downloading ? `${downloadPercent.toFixed(0)}%` : "Download"}
+                </button>
+              {/if}
             </div>
-            {#if !selectedModel.installed}
-              <button
-                class="action"
-                disabled={downloading}
-                onclick={downloadModel}
-              >
-                {downloading ? `${downloadPercent.toFixed(0)}%` : "Download"}
-              </button>
+            {#if downloading}
+              <div class="progress">
+                <span style="width:{downloadPercent}%"></span>
+              </div>
             {/if}
-          </div>
-          {#if downloading}
-            <div class="progress">
-              <span style="width:{downloadPercent}%"></span>
-            </div>
           {/if}
         {:else}
           <p class="note">No speech models are registered.</p>
@@ -508,6 +548,10 @@ Today we are shipping something I have wanted for a long time.
         <p class="note">
           Recognition runs on this machine. Nothing is uploaded, and there is no
           account.
+        </p>
+        <p class="note">
+          Turkish is not here yet — no streaming model has been published for it
+          in a format this engine can load.
         </p>
       </section>
     </div>
