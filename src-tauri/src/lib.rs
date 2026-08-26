@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use tauri::menu::{Menu, MenuItem};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 use audio::{AudioEngine, DiagnosticsView};
@@ -380,6 +380,19 @@ fn set_hide_from_capture(app: AppHandle, enabled: bool) -> Result<bool, String> 
     ))
 }
 
+/// Brings the main window to the front, restoring it if minimised.
+///
+/// Shared by the tray's left-click and its "Show Textream" menu item so the
+/// two gestures a user reaches for — click the icon, or right-click and pick
+/// the item — do exactly the same thing.
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "Show Textream", true, None::<&str>)?;
     let hide = MenuItem::with_id(app, "hide-overlay", "Hide overlay", true, None::<&str>)?;
@@ -390,15 +403,25 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .icon(app.default_window_icon().unwrap().clone())
         .tooltip("Textream")
         .menu(&menu)
+        // The menu still opens on right-click regardless of this setting; it
+        // only frees up left-click, which every other tray app on Windows
+        // treats as "show me the window" rather than "show me the menu".
         .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.unminimize();
-                    let _ = window.set_focus();
-                }
+        .on_tray_icon_event(|tray, event| {
+            // Windows itself treats WM_LBUTTONUP as the tray icon's activation
+            // signal, not the button-down that precedes it — matching that is
+            // what makes this feel like every other tray icon.
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                show_main_window(tray.app_handle());
             }
+        })
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show" => show_main_window(app),
             "hide-overlay" => {
                 if let Some(window) = app.get_webview_window(OVERLAY) {
                     let _ = window.hide();
@@ -428,6 +451,23 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 let applied = backdrop::apply(&window);
                 *app.state::<BackdropState>().0.lock().unwrap() = applied;
+
+                // `close()` — what the custom title bar's ✕ button calls —
+                // fires this event and then destroys the window unless something
+                // intervenes. A destroyed window is gone for the rest of the
+                // process: `get_webview_window("main")` returns `None` from then
+                // on, so neither the tray's "Show Textream" item nor a left-click
+                // could ever bring it back. Hiding it here instead is what makes
+                // the tray icon's "show" gesture mean anything at all — the ✕
+                // button tucks the editor away rather than ending the session
+                // the overlay may still be running.
+                let hideable = window.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = hideable.hide();
+                    }
+                });
             }
 
             let refused = shortcuts::register(&handle);
