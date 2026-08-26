@@ -226,6 +226,16 @@ fn file_path(root: &Path) -> PathBuf {
     root.join("settings.json")
 }
 
+/// Whether a settings file has ever been written.
+///
+/// A dedicated check rather than inferring "first run" from an empty script or
+/// default values: those are also what a returning user sees if they clear
+/// their script, and a heuristic that occasionally re-shows a welcome banner to
+/// an existing user is worse than one extra file access.
+pub fn exists(root: &Path) -> bool {
+    file_path(root).is_file()
+}
+
 /// Reads settings, falling back to defaults for anything unreadable.
 ///
 /// A corrupt or partial file is not an error worth surfacing: the app has a
@@ -267,6 +277,15 @@ mod tests {
     fn missing_file_yields_defaults() {
         let settings = load(Path::new("C:/definitely/not/here"));
         assert_eq!(settings, Settings::default());
+    }
+
+    #[test]
+    fn exists_reports_true_only_after_a_save() {
+        let root = temp_root("exists");
+        assert!(!exists(&root));
+        save(&root, &Settings::default()).unwrap();
+        assert!(exists(&root));
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -84,7 +84,10 @@ impl Recognizer {
     /// Loads a model and opens a stream.
     pub fn new(paths: &ModelPaths) -> Result<Self, String> {
         if !paths.all_present() {
-            return Err("speech model files are missing".into());
+            return Err(
+                "The speech model's files are missing or incomplete. Remove it and download it again."
+                    .into(),
+            );
         }
 
         let encoder = cstring(&paths.encoder)?;
@@ -148,7 +151,11 @@ impl Recognizer {
 
             let recognizer = sys::SherpaOnnxCreateOnlineRecognizer(&config);
             if recognizer.is_null() {
-                return Err("sherpa-onnx rejected the speech model".into());
+                return Err(
+                    "This speech model could not be loaded. It may be corrupted — remove it and \
+                     download it again."
+                        .into(),
+                );
             }
             recognizer
         };
@@ -158,7 +165,7 @@ impl Recognizer {
         if stream.is_null() {
             // SAFETY: undo the successful create before bailing out.
             unsafe { sys::SherpaOnnxDestroyOnlineRecognizer(recognizer) };
-            return Err("could not open a speech stream".into());
+            return Err("Could not start speech recognition. Try restarting Textream.".into());
         }
 
         Ok(Self { recognizer, stream })

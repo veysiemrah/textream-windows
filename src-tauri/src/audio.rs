@@ -98,10 +98,10 @@ impl AudioEngine {
         let host = cpal::default_host();
         let device = host
             .default_input_device()
-            .ok_or("no microphone is available")?;
-        let config = device
-            .default_input_config()
-            .map_err(|error| format!("could not read the microphone's format: {error}"))?;
+            .ok_or("No microphone was found. Plug one in and try again.")?;
+        let config = device.default_input_config().map_err(|error| {
+            format!("Could not read the microphone's format ({error}). Try a different microphone.")
+        })?;
 
         let sample_rate = config.sample_rate();
         let channels = config.channels() as usize;
@@ -252,10 +252,19 @@ fn build_stream(
             on_error,
             None,
         ),
-        other => return Err(format!("unsupported microphone sample format: {other:?}")),
+        other => {
+            return Err(format!(
+                "This microphone's audio format ({other:?}) is not supported. Try a different microphone."
+            ))
+        }
     };
 
-    stream.map_err(|error| format!("could not open the microphone: {error}"))
+    stream.map_err(|error| {
+        format!(
+            "Could not open the microphone ({error}). Check that no other app has it exclusively, \
+             and that Windows has granted microphone access under Settings > Privacy > Microphone."
+        )
+    })
 }
 
 /// Downmixes to mono and hands the chunk to the worker.

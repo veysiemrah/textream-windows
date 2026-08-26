@@ -214,10 +214,10 @@ cargo test --workspace
 - [x] On-device streaming speech recognition — Word Tracking works
 - [x] A model registry covering several languages
 - [ ] Turkish, once a streaming model is converted for it
-- [ ] Settings that persist across launches
-- [ ] Font, size, colour and opacity
-- [ ] Pause, resume, and mute from the overlay
-- [ ] Tap a word to jump; scroll to catch up
+- [x] Settings that persist across launches
+- [x] Font, size, colour and opacity
+- [x] Pause, hold, and mute from the transport dock
+- [x] Tap a word to jump; scroll to catch up
 - [ ] `.textream` files
 - [x] Global shortcuts — start, hold and mute without leaving the camera
 - [ ] Update check

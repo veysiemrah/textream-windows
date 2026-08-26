@@ -205,11 +205,6 @@ fn jump_to_offset(
     broadcast(&app, progress)
 }
 
-/// Which backdrop the compositor gave the main window.
-///
-/// The UI needs this because a frameless transparent window with no effect
-/// applied shows the desktop straight through — it has to paint an opaque
-/// background instead of looking broken.
 /// What the capture path is doing right now.
 ///
 /// Words going missing because audio was dropped and words going missing
@@ -235,9 +230,25 @@ fn shortcut_bindings() -> Vec<(String, String)> {
         .collect()
 }
 
+/// Which backdrop the compositor gave the main window.
+///
+/// The UI needs this because a frameless transparent window with no effect
+/// applied shows the desktop straight through — it has to paint an opaque
+/// background instead of looking broken.
 #[tauri::command]
 fn window_backdrop(state: tauri::State<'_, BackdropState>) -> Backdrop {
     *state.0.lock().unwrap()
+}
+
+/// Whether no settings file exists yet.
+///
+/// Read before `load_settings`, which never writes one — so this stays
+/// accurate for as long as the caller waits to check it. The editor uses it to
+/// decide whether to show the welcome banner, once, without an ever-growing
+/// pile of heuristics for guessing at "new user".
+#[tauri::command]
+fn is_first_run(app: AppHandle) -> Result<bool, String> {
+    Ok(!settings::exists(&data_root(&app)?))
 }
 
 #[tauri::command]
@@ -422,6 +433,7 @@ pub fn run() {
             window_backdrop,
             shortcut_bindings,
             speech_diagnostics,
+            is_first_run,
             load_settings,
             save_settings,
             speech_models,

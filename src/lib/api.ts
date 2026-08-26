@@ -119,6 +119,14 @@ export const EVENT_PROGRESS = "textream://progress";
 export const EVENT_DOWNLOAD = "textream://model-download";
 export const EVENT_APPEARANCE = "textream://appearance";
 
+/**
+ * Whether no settings file has ever been written.
+ *
+ * Backed by a file check in Rust, not a guess from empty-looking values —
+ * those are also what a returning user sees after clearing their script.
+ */
+export const isFirstRun = () => invoke<boolean>("is_first_run");
+
 export const loadSettings = () => invoke<Settings>("load_settings");
 
 /**

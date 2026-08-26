@@ -75,6 +75,7 @@ Today we are shipping something I have wanted for a long time.
 
   let settings = $state<Settings>({ ...FALLBACK, script: SAMPLE });
   let loaded = $state(false);
+  let firstRun = $state(false);
   let backdrop = $state<"mica" | "blur" | "none">("none");
   let panelOpen = $state(false);
 
@@ -118,6 +119,9 @@ Today we are shipping something I have wanted for a long time.
   );
   const minutes = $derived(wordCount / settings.wordsPerSecond / 60);
   const accent = $derived(COLORS[settings.appearance.highlight]);
+  const toggleKeys = $derived(
+    bindings.find(([name]) => name === "Start or stop")?.[1] ?? null,
+  );
 
   const geometry = (): Geometry => ({
     placement: settings.placement,
@@ -177,6 +181,9 @@ Today we are shipping something I have wanted for a long time.
   async function restore() {
     try {
       backdrop = await api.windowBackdrop();
+      // Checked before loadSettings writes anything, and loadSettings never
+      // does — so this stays accurate for as long as it takes to read it.
+      firstRun = await api.isFirstRun();
       const stored = await api.loadSettings();
       // A first run has no script; the sample is more use than a blank page.
       settings = { ...stored, script: stored.script || SAMPLE };
@@ -187,6 +194,26 @@ Today we are shipping something I have wanted for a long time.
       say(`Could not read your settings: ${error}`, "warn");
     } finally {
       loaded = true;
+    }
+  }
+
+  /**
+   * Dismisses the welcome banner and forces an immediate settings save.
+   *
+   * Without the forced save, a user who dismisses the banner and then starts
+   * a take straight away — never touching a slider or the script — would see
+   * it again on the next launch, because nothing would have written
+   * settings.json yet.
+   */
+  async function dismissFirstRun() {
+    if (!firstRun) return;
+    firstRun = false;
+    clearTimeout(saveTimer);
+    try {
+      await api.saveSettings($state.snapshot(settings));
+    } catch {
+      // Losing this one write only means the banner might reappear once;
+      // not worth surfacing as an error.
     }
   }
 
@@ -230,6 +257,7 @@ Today we are shipping something I have wanted for a long time.
       return;
     }
 
+    void dismissFirstRun();
     await api.loadScript(settings.script);
     await api.setMode(settings.mode);
     await api.setSpeed(settings.wordsPerSecond);
@@ -350,6 +378,26 @@ Today we are shipping something I have wanted for a long time.
   <Chrome />
 
   <main class="stage">
+    {#if firstRun}
+      <div class="welcome">
+        <div class="welcome-text">
+          <strong>Welcome to Textream.</strong> Paste your script below, pick Follow,
+          Auto or Voice at the bottom, then press Start
+          {#if toggleKeys}
+            — or <kbd>{toggleKeys}</kbd> from anywhere.
+          {:else}
+            .
+          {/if}
+          Everything runs on this machine; nothing is uploaded.
+        </div>
+        <button
+          class="welcome-dismiss"
+          aria-label="Dismiss"
+          onclick={dismissFirstRun}>×</button
+        >
+      </div>
+    {/if}
+
     <textarea
       bind:value={settings.script}
       oninput={persist}
@@ -374,7 +422,7 @@ Today we are shipping something I have wanted for a long time.
       <!-- Follow mode only. Seeing what the recogniser actually heard is the
            difference between "it does not work" and a fixable problem. -->
       <div class="heard" class:starved={diagnostics.droppedChunks > 0}>
-        <span class="heard-label">Heard</span>
+        <span class="heard-label" title={diagnostics.inputFormat}>Heard</span>
         <span class="heard-text">{diagnostics.heard || "…"}</span>
         {#if diagnostics.droppedChunks > 0}
           <span class="heard-warn"
@@ -756,6 +804,44 @@ Today we are shipping something I have wanted for a long time.
   }
   textarea::placeholder {
     color: var(--ink-faint);
+  }
+
+  .welcome {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin: 8px 0 4px;
+    padding: 12px 14px;
+    border: 1px solid var(--edge);
+    border-radius: 10px;
+    background: var(--surface);
+    flex: none;
+  }
+  .welcome-text {
+    flex: 1;
+    color: var(--ink-dim);
+    font-size: 12.5px;
+    line-height: 1.6;
+  }
+  .welcome-text strong {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .welcome-dismiss {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--ink-faint);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .welcome-dismiss:hover {
+    background: var(--surface-lift);
+    color: var(--ink);
   }
 
   .gauge {
