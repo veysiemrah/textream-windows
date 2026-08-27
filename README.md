@@ -19,8 +19,8 @@
 
 ---
 
-> **Status: early development.** All three guidance modes work. Speech
-> recognition covers several languages but not Turkish yet — see
+> **v1.0.** All three guidance modes work end to end. Speech recognition
+> covers several languages but not Turkish yet — see
 > [Languages](#languages).
 
 <p align="center">

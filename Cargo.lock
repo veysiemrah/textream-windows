@@ -3111,7 +3111,7 @@ dependencies = [
 
 [[package]]
 name = "prompt-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "unicode-segmentation",
 ]
@@ -4398,7 +4398,7 @@ dependencies = [
 
 [[package]]
 name = "textream"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "cpal",
  "prompt-core",
