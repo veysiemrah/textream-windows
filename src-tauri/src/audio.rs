@@ -228,8 +228,9 @@ fn build_stream(
     log_path: Option<PathBuf>,
 ) -> Result<cpal::Stream, String> {
     // A stream error is a device dropping out mid-session — driver crash,
-    // unplugged cable — the kind of thing a presenter needs to have a trace
-    // of afterwards, not just a Follow mode that quietly stopped moving.
+    // unplugged cable — the kind of thing a presenter needs to have a trace in
+    // the crash log, but failing to resolve that log's own path is not a
+    // reason to refuse to open the microphone at all.
     let on_error = move |error| {
         if let Some(path) = &log_path {
             crate::diagnostics::append(path, &format!("microphone stream error: {error}"));
@@ -398,5 +399,64 @@ fn run_worker(
             let state = app.state::<SessionState>();
             state.0.lock().unwrap().rebase_transcript_window();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn captured_chunk(samples: &[f32], channels: usize) -> (Vec<f32>, usize) {
+        let (sender, receiver) = sync_channel(1);
+        let diagnostics = Diagnostics::default();
+        forward(samples.iter().copied(), channels, &sender, &diagnostics);
+        (
+            receiver.try_recv().expect("forwarded audio chunk"),
+            diagnostics.dropped.load(Ordering::Relaxed),
+        )
+    }
+
+    #[test]
+    fn stereo_high_rate_frames_are_downmixed_without_changing_frame_count() {
+        // One millisecond of 192 kHz stereo input. The sample rate itself is
+        // carried separately into the recogniser; this verifies that capture
+        // does not reinterpret, resample, or discard high-rate frames while
+        // downmixing them to mono.
+        let frames = 192usize;
+        let mut stereo = Vec::with_capacity(frames * 2);
+        for i in 0..frames {
+            let left = i as f32 / frames as f32;
+            stereo.push(left);
+            stereo.push(-left);
+        }
+
+        let (mono, dropped) = captured_chunk(&stereo, 2);
+        assert_eq!(mono.len(), frames);
+        assert!(mono.iter().all(|sample| sample.abs() < 1e-6));
+        assert_eq!(dropped, 0);
+    }
+
+    #[test]
+    fn multichannel_input_is_averaged_per_frame() {
+        let input = [1.0, 0.5, -0.5, 0.0, -1.0, 0.5, 0.5, 0.0];
+        let (mono, dropped) = captured_chunk(&input, 4);
+        assert_eq!(mono, vec![0.25, 0.0]);
+        assert_eq!(dropped, 0);
+    }
+
+    #[test]
+    fn a_full_audio_queue_drops_instead_of_blocking_the_callback() {
+        let (sender, _receiver) = sync_channel(1);
+        let diagnostics = Diagnostics::default();
+
+        forward([0.1, 0.2].into_iter(), 1, &sender, &diagnostics);
+        forward([0.3, 0.4].into_iter(), 1, &sender, &diagnostics);
+
+        assert_eq!(diagnostics.dropped.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn waveform_broadcast_interval_stays_at_twenty_hz() {
+        assert_eq!(BROADCAST_INTERVAL, Duration::from_millis(50));
     }
 }

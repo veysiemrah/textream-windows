@@ -121,6 +121,7 @@ impl Recognizer {
                     debug: 0,
                     paraformer: std::mem::zeroed(),
                     zipformer2_ctc: std::mem::zeroed(),
+                    t_one_ctc: std::mem::zeroed(),
                     model_type: std::mem::zeroed(),
                     modeling_unit: std::mem::zeroed(),
                     bpe_vocab: std::mem::zeroed(),

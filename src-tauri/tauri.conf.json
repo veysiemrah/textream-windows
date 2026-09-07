@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Textream",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "identifier": "dev.crtkafa.textream",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "bun run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -59,8 +59,7 @@
       "runtime/onnxruntime.dll": "onnxruntime.dll",
       "runtime/onnxruntime_providers_shared.dll": "onnxruntime_providers_shared.dll",
       "runtime/sherpa-onnx-c-api.dll": "sherpa-onnx-c-api.dll",
-      "runtime/sherpa-onnx-cxx-api.dll": "sherpa-onnx-cxx-api.dll",
-      "runtime/cargs.dll": "cargs.dll"
+      "runtime/sherpa-onnx-cxx-api.dll": "sherpa-onnx-cxx-api.dll"
     },
     "copyright": "Copyright (c) 2026 CRTkafa",
     "shortDescription": "Teleprompter for Windows",

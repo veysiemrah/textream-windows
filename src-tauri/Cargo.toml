@@ -15,6 +15,11 @@ crate-type = ["lib", "cdylib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+# Pin the upstream sherpa-rs commit that skips cargs.lib on Windows. The 0.6.8
+# crates.io build script incorrectly links the CLI-only cargs library when using
+# the current prebuilt sherpa-onnx package, which no longer ships that import
+# library. Keeping the exact revision makes the dependency reproducible.
+sherpa-rs-sys = { git = "https://github.com/thewh1teagle/sherpa-rs", rev = "857bedd35ec5215c65b4911fdadca31f403b6f6b", package = "sherpa-rs-sys", default-features = false, features = ["download-binaries"] }
 
 [dependencies]
 prompt-core.workspace = true
@@ -30,7 +35,9 @@ serde_json = "1"
 cpal = "0.18"
 # Streaming speech recognition. `tts` is off — this app never synthesises —
 # and `sys` exposes the online C API, which the safe wrapper does not cover.
-sherpa-rs = { version = "0.6", default-features = false, features = [
+# This is pinned to the same upstream revision as sherpa-rs-sys so Cargo uses
+# one matching FFI implementation and gets the Windows cargs linker fix.
+sherpa-rs = { git = "https://github.com/thewh1teagle/sherpa-rs", rev = "857bedd35ec5215c65b4911fdadca31f403b6f6b", package = "sherpa-rs", default-features = false, features = [
   "download-binaries",
   "sys",
 ] }

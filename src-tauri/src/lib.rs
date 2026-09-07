@@ -24,6 +24,7 @@ use std::sync::Mutex;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
 use audio::{AudioEngine, DiagnosticsView};
 use backdrop::Backdrop;
@@ -394,6 +395,30 @@ fn show_main_window(app: &AppHandle) {
     }
 }
 
+/// Explicit Quit should still work, but make an accidental tray click harder
+/// to turn into a dead take while the teleprompter is active.
+fn request_quit(app: &AppHandle) {
+    let running = app.state::<SessionState>().0.lock().unwrap().is_running();
+    if !running {
+        app.exit(0);
+        return;
+    }
+
+    let handle = app.clone();
+    app.dialog()
+        .message("A teleprompter session is still running. Quit Textream anyway?")
+        .title("Quit while prompting?")
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Quit".into(),
+            "Keep prompting".into(),
+        ))
+        .show(move |quit| {
+            if quit {
+                handle.exit(0);
+            }
+        });
+}
+
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "Show Textream", true, None::<&str>)?;
     let hide = MenuItem::with_id(app, "hide-overlay", "Hide overlay", true, None::<&str>)?;
@@ -436,7 +461,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                     let _ = window.hide();
                 }
             }
-            "quit" => app.exit(0),
+            "quit" => request_quit(app),
             _ => {}
         })
         .build(app)?;

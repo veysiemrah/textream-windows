@@ -18,7 +18,7 @@ use tauri_plugin_global_shortcut::{Builder, Code, Modifiers, Shortcut, ShortcutS
 pub const EVENT: &str = "textream://shortcut";
 
 /// What the presenter asked for.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Action {
     /// Start a take, or stop the running one.
@@ -57,7 +57,12 @@ pub fn described() -> Vec<(&'static str, &'static str)> {
         .collect()
 }
 
-/// Builds the plugin with the handler already attached.
+/// Builds the OS-level shortcut plugin with the handler already attached.
+///
+/// `tauri-plugin-global-shortcut` registers these with Windows rather than with
+/// either webview, so delivery does not depend on Textream being the foreground
+/// application. OBS, a browser, PowerPoint, or any other app can own focus and
+/// these bindings still arrive here.
 pub fn plugin() -> TauriPlugin<Wry> {
     Builder::new()
         .with_handler(|app, shortcut, event| {
@@ -123,15 +128,20 @@ mod tests {
     }
 
     #[test]
-    fn matching_resolves_each_binding() {
-        for (code, _, _) in BINDINGS {
+    fn matching_resolves_every_binding_to_the_expected_action() {
+        let expected = [Action::Toggle, Action::Hold, Action::Mute];
+        for ((code, _, _), expected_action) in BINDINGS.iter().zip(expected) {
             let shortcut = Shortcut::new(Some(modifiers()), *code);
-            assert!(action_for(&shortcut).is_some());
+            assert_eq!(action_for(&shortcut), Some(expected_action));
         }
     }
 
     #[test]
-    fn a_bare_key_matches_nothing() {
-        assert!(action_for(&Shortcut::new(None, Code::F9)).is_none());
+    fn missing_or_wrong_modifiers_do_not_trigger_an_action() {
+        assert_eq!(action_for(&Shortcut::new(None, Code::F9)), None);
+        assert_eq!(
+            action_for(&Shortcut::new(Some(Modifiers::CONTROL), Code::F9)),
+            None
+        );
     }
 }
