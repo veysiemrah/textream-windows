@@ -166,6 +166,10 @@ pub struct Settings {
     pub appearance: Appearance,
     /// Speech model to use, `None` meaning the registry default.
     pub model_id: Option<String>,
+    /// The input device to capture from, keyed by name (`None` meaning the
+    /// system default). A name that no longer matches any device falls back
+    /// to the default at capture time rather than failing to start.
+    pub microphone_id: Option<String>,
     /// The script last edited, restored on launch.
     pub script: String,
 }
@@ -184,6 +188,7 @@ impl Default for Settings {
             click_through: true,
             appearance: Appearance::default(),
             model_id: None,
+            microphone_id: None,
             script: String::new(),
         }
     }
@@ -218,6 +223,12 @@ impl Settings {
             fallback.height
         };
         self.appearance = self.appearance.sanitised();
+        // An empty string is not a device name anything will ever match; treat
+        // it the same as never having chosen one, rather than carrying a value
+        // that only ever falls back.
+        if self.microphone_id.as_deref() == Some("") {
+            self.microphone_id = None;
+        }
         self
     }
 }
@@ -301,12 +312,24 @@ mod tests {
                 ..Appearance::default()
             },
             model_id: Some("en-20m".into()),
+            microphone_id: Some("Microphone (USB Audio Device)".into()),
             ..Settings::default()
         };
 
         save(&root, &settings).unwrap();
         assert_eq!(load(&root), settings);
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_empty_microphone_id_sanitises_to_the_system_default() {
+        let settings = Settings {
+            microphone_id: Some(String::new()),
+            ..Settings::default()
+        }
+        .sanitised();
+
+        assert_eq!(settings.microphone_id, None);
     }
 
     #[test]

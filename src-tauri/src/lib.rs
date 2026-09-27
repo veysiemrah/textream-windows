@@ -26,7 +26,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
-use audio::{AudioEngine, DiagnosticsView};
+use audio::{AudioEngine, DiagnosticsView, InputDevice};
 use backdrop::Backdrop;
 use model::{DownloadProgress, ModelStatus};
 use overlay::Geometry;
@@ -102,6 +102,7 @@ fn start_session(
     session: tauri::State<'_, SessionState>,
     audio: tauri::State<'_, AudioState>,
     model_id: Option<String>,
+    device_id: Option<String>,
 ) -> Result<ProgressView, String> {
     let mode = {
         let mut live = session.0.lock().unwrap();
@@ -127,12 +128,71 @@ fn start_session(
             None
         };
 
-        let engine = AudioEngine::start(app.clone(), recognizer)?;
+        let engine = AudioEngine::start(app.clone(), recognizer, device_id)?;
         *audio.0.lock().unwrap() = Some(engine);
     }
 
     let progress = session.0.lock().unwrap().progress();
     Ok(broadcast(&app, progress))
+}
+
+/// Every currently usable microphone, refreshed on every call.
+///
+/// Called each time the Settings dropdown opens rather than cached in Rust,
+/// so a headset plugged in mid-session shows up without a restart.
+#[tauri::command]
+fn list_input_devices() -> Vec<InputDevice> {
+    audio::list_input_devices()
+}
+
+/// Switches the running session to a different microphone, restarting
+/// capture and (when the mode needs one) the recogniser cleanly.
+///
+/// A no-op when nothing is currently listening — Classic mode, or no session
+/// running at all — since there is nothing to restart; the chosen device
+/// simply takes effect the next time one starts.
+#[tauri::command]
+fn switch_microphone_device(
+    app: AppHandle,
+    session: tauri::State<'_, SessionState>,
+    audio: tauri::State<'_, AudioState>,
+    device_id: Option<String>,
+    model_id: Option<String>,
+) -> Result<(), String> {
+    let mut engine_slot = audio.0.lock().unwrap();
+    if engine_slot.is_none() {
+        return Ok(());
+    }
+
+    let mode = session.0.lock().unwrap().mode();
+    if !mode.needs_microphone() {
+        return Ok(());
+    }
+
+    let recognizer = if mode.needs_speech_recognition() {
+        let chosen = model_id
+            .as_deref()
+            .and_then(model::find)
+            .unwrap_or_else(model::default_model);
+        let paths = model::paths(&data_root(&app)?, chosen);
+        if !paths.all_present() {
+            return Err(format!(
+                "the {} speech model has not been downloaded yet",
+                chosen.label
+            ));
+        }
+        Some(Recognizer::new(&paths)?)
+    } else {
+        None
+    };
+
+    // Drop the old engine before opening the new one: it must release the
+    // device first, or the replacement can fail to claim it on exclusive-mode
+    // hardware.
+    *engine_slot = None;
+    let engine = AudioEngine::start(app.clone(), recognizer, device_id)?;
+    *engine_slot = Some(engine);
+    Ok(())
 }
 
 #[tauri::command]
@@ -563,6 +623,8 @@ pub fn run() {
             save_script_file,
             open_script_file,
             speech_diagnostics,
+            list_input_devices,
+            switch_microphone_device,
             is_first_run,
             load_settings,
             save_settings,

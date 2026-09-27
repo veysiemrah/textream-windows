@@ -10,12 +10,14 @@
     FontFamily,
     FontSize,
     Geometry,
+    InputDevice,
     ModelStatus,
     Mode,
     Settings,
   } from "./lib/api";
   import Chrome from "./Chrome.svelte";
   import LiquidStart from "./LiquidStart.svelte";
+  import MicrophoneSelect from "./MicrophoneSelect.svelte";
 
   const SAMPLE = `Welcome back to the show. [smile at camera]
 
@@ -41,6 +43,7 @@ Today we are shipping something I have wanted for a long time.
       opacity: 0.92,
     },
     modelId: null,
+    microphoneId: null,
     script: "",
   };
 
@@ -92,6 +95,7 @@ Today we are shipping something I have wanted for a long time.
   let wordProgress = $state(0);
 
   let models = $state<ModelStatus[]>([]);
+  let devices = $state<InputDevice[]>([]);
   let bindings = $state<[string, string][]>([]);
   let diagnostics = $state<api.SpeechDiagnostics | null>(null);
   let downloading = $state(false);
@@ -192,6 +196,7 @@ Today we are shipping something I have wanted for a long time.
       // A first run has no script; the sample is more use than a blank page.
       settings = { ...stored, script: stored.script || SAMPLE };
       models = await api.speechModels();
+      devices = await api.listInputDevices();
       bindings = await api.shortcutBindings();
       settings.modelId ??= models[0]?.id ?? null;
     } catch (error) {
@@ -234,6 +239,31 @@ Today we are shipping something I have wanted for a long time.
       say(`Download failed: ${error}`, "warn");
     } finally {
       downloading = false;
+    }
+  }
+
+  /** Re-enumerates input devices, called each time the dropdown opens. */
+  async function refreshDevices() {
+    try {
+      devices = await api.listInputDevices();
+    } catch {
+      // A failed refresh just keeps the last known list; the dropdown still
+      // works, it just might miss a device plugged in this exact instant.
+    }
+  }
+
+  async function chooseMicrophone(id: string | null) {
+    settings.microphoneId = id;
+    persist();
+    if (running && needsMicrophone) {
+      try {
+        await api.switchMicrophoneDevice(
+          id,
+          settings.mode === "wordTracking" ? settings.modelId : null,
+        );
+      } catch (error) {
+        say(`Could not switch to that microphone: ${error}`, "warn");
+      }
     }
   }
 
@@ -315,6 +345,7 @@ Today we are shipping something I have wanted for a long time.
     try {
       await api.startSession(
         settings.mode === "wordTracking" ? settings.modelId : null,
+        settings.microphoneId,
       );
     } catch (error) {
       fail(String(error));
@@ -644,6 +675,26 @@ Today we are shipping something I have wanted for a long time.
         {:else}
           <p class="note">No shortcuts are registered.</p>
         {/if}
+      </section>
+
+      <section>
+        <h2>Microphone</h2>
+        <label class="field">
+          <span class="label">Input device</span>
+          <MicrophoneSelect
+            value={settings.microphoneId}
+            {devices}
+            {level}
+            active={running && needsMicrophone}
+            onrefresh={refreshDevices}
+            onchange={chooseMicrophone}
+          />
+        </label>
+        <p class="note">
+          Follow and Voice mode read from this device; Auto never opens the
+          microphone. If a device disappears, because it was unplugged or
+          renamed by its driver, Textream falls back to the system default.
+        </p>
       </section>
 
       <section>

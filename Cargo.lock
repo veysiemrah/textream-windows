@@ -3111,7 +3111,7 @@ dependencies = [
 
 [[package]]
 name = "prompt-core"
-version = "1.0.0"
+version = "1.2.0"
 dependencies = [
  "unicode-segmentation",
 ]
@@ -3695,8 +3695,7 @@ dependencies = [
 [[package]]
 name = "sherpa-rs"
 version = "0.6.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81835d89a3fc44482a6829e3e2483ac83f7b4d1623c76f196c77c9ecf5c18203"
+source = "git+https://github.com/thewh1teagle/sherpa-rs?rev=857bedd35ec5215c65b4911fdadca31f403b6f6b#857bedd35ec5215c65b4911fdadca31f403b6f6b"
 dependencies = [
  "eyre",
  "hound",
@@ -3707,8 +3706,7 @@ dependencies = [
 [[package]]
 name = "sherpa-rs-sys"
 version = "0.6.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "591c9432b20f41d47f622a73c2888b188c321e313d820824df7d9fa51dbada43"
+source = "git+https://github.com/thewh1teagle/sherpa-rs?rev=857bedd35ec5215c65b4911fdadca31f403b6f6b#857bedd35ec5215c65b4911fdadca31f403b6f6b"
 dependencies = [
  "bindgen",
  "bzip2",
@@ -4398,7 +4396,7 @@ dependencies = [
 
 [[package]]
 name = "textream"
-version = "1.0.0"
+version = "1.2.0"
 dependencies = [
  "cpal",
  "prompt-core",
@@ -4406,6 +4404,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "sherpa-rs",
+ "sherpa-rs-sys",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",

@@ -98,7 +98,21 @@ export interface Settings {
   clickThrough: boolean;
   appearance: Appearance;
   modelId: string | null;
+  /** Input device to capture from, by name. `null` means system default. */
+  microphoneId: string | null;
   script: string;
+}
+
+/**
+ * An input device as cpal sees it.
+ *
+ * `id` is the device's name — cpal exposes no other stable identifier on
+ * Windows, so the name doubles as the id on both sides of the IPC boundary.
+ */
+export interface InputDevice {
+  id: string;
+  name: string;
+  isDefault: boolean;
 }
 
 export interface ModelStatus {
@@ -154,8 +168,8 @@ export const setSpeed = (wordsPerSecond: number) =>
  * downloaded, so the caller can offer the download rather than start a session
  * that would silently never move.
  */
-export const startSession = (modelId: string | null) =>
-  invoke<ProgressView>("start_session", { modelId });
+export const startSession = (modelId: string | null, deviceId: string | null) =>
+  invoke<ProgressView>("start_session", { modelId, deviceId });
 
 export const stopSession = () => invoke<ProgressView>("stop_session");
 export const isRunning = () => invoke<boolean>("is_running");
@@ -181,6 +195,29 @@ export const jumpToWord = (index: number) =>
   invoke<ProgressView>("jump_to_word", { index });
 
 export const speechModels = () => invoke<ModelStatus[]>("speech_models");
+
+/**
+ * Every currently usable microphone.
+ *
+ * Backed by a fresh cpal enumeration on every call rather than a cache, so
+ * calling this again when the dropdown opens picks up a device plugged in
+ * mid-session.
+ */
+export const listInputDevices = () =>
+  invoke<InputDevice[]>("list_input_devices");
+
+/**
+ * Switches the running session to a different microphone.
+ *
+ * A no-op when nothing is currently listening — the new device only takes
+ * effect the next time a session starts. When something is listening, this
+ * restarts capture (and, for Follow mode, the recogniser) against the new
+ * device.
+ */
+export const switchMicrophoneDevice = (
+  deviceId: string | null,
+  modelId: string | null,
+) => invoke<void>("switch_microphone_device", { deviceId, modelId });
 
 export const downloadSpeechModel = (id: string) =>
   invoke<ModelStatus>("download_speech_model", { id });

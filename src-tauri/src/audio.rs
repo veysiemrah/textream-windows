@@ -17,6 +17,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -83,6 +84,83 @@ impl Diagnostics {
     }
 }
 
+/// A microphone as offered in Settings.
+///
+/// `id` is cpal's own [`cpal::DeviceId`], serialised through its `Display`
+/// implementation (`"<host>:<device>"`) — stable across relaunches and
+/// reboots, unlike the display name, which some drivers reorder or rename
+/// between sessions.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InputDevice {
+    pub id: String,
+    pub name: String,
+    pub is_default: bool,
+}
+
+/// Every usable input device cpal can currently see.
+///
+/// Called fresh each time the dropdown opens rather than cached, so plugging
+/// in a headset after the app has started shows up without a restart. A
+/// device that fails to report a default config (output-only, or a driver
+/// returning empty capabilities) is left out: listing it would only offer a
+/// choice that fails the moment it is opened.
+pub fn list_input_devices() -> Vec<InputDevice> {
+    let host = cpal::default_host();
+    let default_id = host.default_input_device().and_then(|d| d.id().ok());
+
+    let Ok(devices) = host.input_devices() else {
+        return Vec::new();
+    };
+
+    devices
+        .filter_map(|device| {
+            let id = device.id().ok()?;
+            device.default_input_config().ok()?;
+            let name = device
+                .description()
+                .ok()
+                .map(|description| description.name().to_string())
+                .unwrap_or_else(|| id.to_string());
+            let is_default = default_id.as_ref() == Some(&id);
+            Some(InputDevice {
+                id: id.to_string(),
+                name,
+                is_default,
+            })
+        })
+        .collect()
+}
+
+/// Opens the requested device, falling back to the system default when it is
+/// missing.
+///
+/// A saved device id that no longer matches anything — unplugged, or never
+/// having existed on this machine — must never stop the app from opening a
+/// microphone at all; it just means the choice quietly reverts to whatever
+/// Windows currently calls default.
+fn resolve_device(host: &cpal::Host, device_id: Option<&str>) -> Result<cpal::Device, String> {
+    if let Some(id) = device_id {
+        if let Ok(parsed) = cpal::DeviceId::from_str(id) {
+            if let Some(device) = host.device_by_id(&parsed) {
+                return Ok(device);
+            }
+        }
+    }
+    host.default_input_device()
+        .ok_or_else(|| "No microphone was found. Plug one in and try again.".to_string())
+}
+
+/// The device's human-readable name, or a generic fallback when even that
+/// cannot be read (the device disappearing between resolution and this call).
+fn device_label(device: &cpal::Device) -> String {
+    device
+        .description()
+        .ok()
+        .map(|description| description.name().to_string())
+        .unwrap_or_else(|| "microphone".to_string())
+}
+
 /// A running capture session. Dropping it stops the microphone.
 pub struct AudioEngine {
     stop: Arc<AtomicBool>,
@@ -93,13 +171,16 @@ pub struct AudioEngine {
 }
 
 impl AudioEngine {
-    /// Opens the default input device and starts metering, optionally
-    /// transcribing through `recognizer`.
-    pub fn start(app: AppHandle, recognizer: Option<Recognizer>) -> Result<Self, String> {
+    /// Opens `device_id` (or the system default, when `None` or missing) and
+    /// starts metering, optionally transcribing through `recognizer`.
+    pub fn start(
+        app: AppHandle,
+        recognizer: Option<Recognizer>,
+        device_id: Option<String>,
+    ) -> Result<Self, String> {
         let host = cpal::default_host();
-        let device = host
-            .default_input_device()
-            .ok_or("No microphone was found. Plug one in and try again.")?;
+        let device = resolve_device(&host, device_id.as_deref())?;
+        let device_name = device_label(&device);
         let config = device.default_input_config().map_err(|error| {
             format!("Could not read the microphone's format ({error}). Try a different microphone.")
         })?;
@@ -110,7 +191,7 @@ impl AudioEngine {
 
         let diagnostics = Arc::new(Diagnostics::default());
         *diagnostics.format.lock().unwrap() = format!(
-            "{} Hz · {} channel{} · {:?}",
+            "{device_name} · {} Hz · {} channel{} · {:?}",
             sample_rate,
             channels,
             if channels == 1 { "" } else { "s" },
@@ -405,6 +486,70 @@ fn run_worker(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unknown_device_id_falls_back_to_the_system_default() {
+        let host = cpal::default_host();
+        // Hardware-dependent: a build machine with no microphone at all has
+        // nothing to fall back to, and that is not this test's concern.
+        let Some(default_device) = host.default_input_device() else {
+            return;
+        };
+        let default_id = default_device.id().unwrap();
+
+        let resolved = resolve_device(&host, Some("wasapi:definitely-not-a-real-microphone-xyz"))
+            .expect("falls back instead of failing");
+        assert_eq!(resolved.id().unwrap(), default_id);
+    }
+
+    #[test]
+    fn a_device_id_that_fails_to_parse_falls_back_to_the_system_default() {
+        let host = cpal::default_host();
+        let Some(default_device) = host.default_input_device() else {
+            return;
+        };
+        let default_id = default_device.id().unwrap();
+
+        // No "host:device" separator at all — a corrupt or hand-edited
+        // settings file, not just an unplugged device.
+        let resolved =
+            resolve_device(&host, Some("not a device id")).expect("falls back instead of failing");
+        assert_eq!(resolved.id().unwrap(), default_id);
+    }
+
+    #[test]
+    fn no_device_id_resolves_to_the_system_default() {
+        let host = cpal::default_host();
+        let Some(default_device) = host.default_input_device() else {
+            return;
+        };
+        let default_id = default_device.id().unwrap();
+
+        let resolved = resolve_device(&host, None).expect("a default device is present");
+        assert_eq!(resolved.id().unwrap(), default_id);
+    }
+
+    #[test]
+    fn a_device_id_that_matches_a_real_device_resolves_to_it() {
+        let host = cpal::default_host();
+        let Some(default_device) = host.default_input_device() else {
+            return;
+        };
+        let default_id = default_device.id().unwrap().to_string();
+
+        let resolved =
+            resolve_device(&host, Some(&default_id)).expect("the named device exists");
+        assert_eq!(resolved.id().unwrap().to_string(), default_id);
+    }
+
+    #[test]
+    fn listed_devices_are_flagged_default_at_most_once_each() {
+        let devices = list_input_devices();
+        let defaults = devices.iter().filter(|d| d.is_default).count();
+        // Zero on a build machine with no microphone, one otherwise — never
+        // more, since only one device can be the system default at a time.
+        assert!(defaults <= 1);
+    }
 
     fn captured_chunk(samples: &[f32], channels: usize) -> (Vec<f32>, usize) {
         let (sender, receiver) = sync_channel(1);
