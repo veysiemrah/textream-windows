@@ -50,7 +50,7 @@ original author's blessing to use the Textream name and icon.
 There is no shared code to fork. The macOS app is SwiftUI and AppKit throughout:
 the notch overlay, the settings UI, the text layout, and the speech engine are
 all Apple frameworks, and none of it compiles anywhere else. A fork would carry
-a git history no commit here ever touches, while GitHub hides forks from
+a git history no commit here ever touches, while forks are hidden from
 repository search — costing discoverability for nothing in return.
 
 What carries over is the product and the algorithms, reimplemented in Rust.
@@ -282,7 +282,7 @@ icon with his blessing. The cue syntax, the three guidance modes, and the
 approach to word tracking are all his design.
 
 - Original macOS app: [github.com/f/textream](https://github.com/f/textream)
-- Windows port: [CRTkafa](https://github.com/CRTkafa)
+- Windows port: [CRT](https://git.crt.fyi/CRT)
 
 Speech recognition uses [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) by
 the k2-fsa team, with streaming models published by
