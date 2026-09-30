@@ -233,6 +233,24 @@ Build the installer:
 bun run app:build
 ```
 
+Build the installer for a release:
+
+```bash
+bun run release
+```
+
+A binary embeds the absolute paths of what it was compiled from — Rust panic
+locations, and `__FILE__` in the sherpa-onnx library this build compiles with
+MSVC — and on a developer's machine those paths hold the account name. The
+release build therefore runs through two commands of
+[wayBetter](https://git.crt.fyi/CRT/waybetter)'s CLI (set `WAYBETTER_CLI` to its
+`packages/waybetter/bin/waybetter.mjs`, or have `waybetter` on the `PATH`):
+`build-env` builds with those paths remapped or trimmed, and `privacy-scan`
+opens the finished installer and fails the release if the account name, or any
+name listed in the file `WAYBETTER_FORBIDDEN_TERMS` points at, is still in it.
+Reviewed false positives live in `privacy-allowlist.txt`. It needs CMake and
+7-Zip, and only an installer that passed is published.
+
 Run the test suite:
 
 ```bash

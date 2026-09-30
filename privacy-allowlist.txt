@@ -1,0 +1,17 @@
+# Reviewed false positives of the release scan (scripts/release.mjs), one per line:
+#   <file glob>: <regex over the hit's surroundings, the matched word written <term>>
+#
+# onnxruntime.dll is Microsoft's prebuilt runtime. It names ONNX operators and quotes their
+# documentation, and one operator's name is an ordinary English word that can also be a name.
+# None of these is a path or a person.
+**/onnxruntime.dll: Atanh<term>Min
+**/onnxruntime.dll: onnxruntime::<term>_\d+<
+**/onnxruntime.dll: <term> sequence length was
+**/onnxruntime.dll: <term> detections to output
+**/onnxruntime.dll: is_bidirectional<term> distance
+**/onnxruntime.dll: = <term> ?\(
+**/onnxruntime.dll: [QX]_<term>[ ,)_]
+#
+# textream.exe holds the names of the HTTP headers its webview layer knows; one of them carries
+# the same English word.
+**/textream.exe: Access-Control-<term>-Age
