@@ -21,7 +21,7 @@ use crate::alignment::{
     DEFAULT_AGREEMENT_TOLERANCE,
 };
 use crate::script::PromptScript;
-use crate::text::{graphemes, is_readable, split_into_words};
+use crate::text::{fold_case, graphemes, is_readable, split_into_words};
 
 /// How far the matcher may look ahead on either side when it hits a mismatch.
 const MAX_SKIP: usize = 5;
@@ -54,15 +54,10 @@ impl PromptMatcher {
             source.annotation_ranges(),
             offset.min(source.character_count()),
         );
-        // Lowercasing per grapheme rather than over the whole string keeps a
-        // 1:1 index mapping. A whole-string lowercase can change the grapheme
-        // count (Turkish `İ` expands to two scalars) and silently shift every
-        // offset the matcher returns.
-        let lowered = source
-            .graphemes()
-            .iter()
-            .map(|g| g.to_lowercase())
-            .collect();
+        // Folding per grapheme rather than over the whole string keeps a 1:1
+        // index mapping, so no case change can shift the offsets the matcher
+        // returns.
+        let lowered = source.graphemes().iter().map(|g| fold_case(g)).collect();
 
         Self {
             source,
@@ -174,7 +169,7 @@ impl PromptMatcher {
     /// transcript reaches.
     fn character_level_match(&self, spoken: &str) -> usize {
         let source = &self.lowered[self.match_start_offset..];
-        let spoken: Vec<String> = graphemes(&spoken.to_lowercase())
+        let spoken: Vec<String> = graphemes(&fold_case(spoken))
             .into_iter()
             .filter(|g| is_readable(g) || g.chars().all(char::is_whitespace))
             .collect();
@@ -257,7 +252,7 @@ impl PromptMatcher {
             .source
             .slice(self.match_start_offset..self.source.character_count());
         let source_words: Vec<&str> = remaining.split(' ').filter(|w| !w.is_empty()).collect();
-        let spoken_words = split_into_words(&spoken.to_lowercase());
+        let spoken_words = split_into_words(&fold_case(spoken));
 
         let mut source_index = 0usize;
         let mut spoken_index = 0usize;
@@ -265,9 +260,9 @@ impl PromptMatcher {
         let mut inside_annotation = false;
 
         let alnum = |word: &str| -> String {
-            word.chars()
+            fold_case(word)
+                .chars()
                 .filter(|c| c.is_alphanumeric())
-                .flat_map(char::to_lowercase)
                 .collect()
         };
         let width = |word: &str| graphemes(word).len();
@@ -592,6 +587,22 @@ mod tests {
         let mut m = matcher("你好世界");
         m.match_transcript("你好");
         assert!(m.recognized_character_count() > 0);
+    }
+
+    #[test]
+    fn turkish_capitals_match_a_lowercase_transcript() {
+        // The Turkish model writes lowercase spoken form, so `I` must meet
+        // `ı` and `İ` must meet `i`.
+        let mut m = matcher("IŞIK SÖNDÜ İSTANBUL'DA");
+        m.match_transcript("ışık söndü istanbulda");
+        assert_eq!(m.recognized_character_count(), m.source().character_count());
+    }
+
+    #[test]
+    fn a_dotted_capital_does_not_shift_offsets() {
+        let mut m = matcher("İzmir güzel bir şehir");
+        m.match_transcript("izmir güzel");
+        assert_eq!(m.source().slice(0..m.recognized_character_count()).trim_end(), "İzmir güzel");
     }
 
     #[test]

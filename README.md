@@ -20,7 +20,7 @@
 ---
 
 > **v1.0.** All three guidance modes work end to end. Speech recognition
-> covers several languages but not Turkish yet — see
+> covers several languages, Turkish included — see
 > [Languages](#languages).
 
 <p align="center">
@@ -171,13 +171,15 @@ exactly when somebody has published a streaming model for it:
 | English (small) — fastest, the default | 42 MB |
 | English, German, French | 71 MB each |
 | Spanish | 156 MB |
+| Turkish | 73 MB |
 | Chinese (Mandarin) | 77 MB |
 | Arabic, Indonesian, Japanese, Russian, Thai, Vietnamese (one model) | 339 MB |
 
-**Turkish is not available yet.** A model exists — Kroko publishes a Turkish
-community streaming model — but only in their own packaging, and nobody has
-converted it to the ONNX layout sherpa-onnx loads. That conversion is the whole
-job; the app already handles everything after it.
+Turkish uses [seda-v0.1](https://huggingface.co/atasoglu/seda-v0.1), a
+streaming Zipformer2 transducer trained on Common Voice and the ISSAI Turkish
+Speech Corpus (Apache-2.0). Its transcripts are lowercase, so the matcher folds
+`I`, `İ`, `i` and `ı` together — Unicode's default lowercase gets Turkish wrong,
+and a capitalised script line would otherwise never match what was said.
 
 Adding a language is a few lines in [`model.rs`](src-tauri/src/model.rs) and a
 published model to point at.
@@ -266,7 +268,7 @@ cargo test --workspace
 - [x] Classic and Voice-Activated modes end to end
 - [x] On-device streaming speech recognition — Word Tracking works
 - [x] A model registry covering several languages
-- [ ] Turkish, once a streaming model is converted for it
+- [x] Turkish
 - [x] Settings that persist across launches
 - [x] Font, size, colour and opacity
 - [x] Pause, hold, and mute from the transport dock
@@ -304,7 +306,8 @@ approach to word tracking are all his design.
 
 Speech recognition uses [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) by
 the k2-fsa team, with streaming models published by
-[csukuangfj](https://huggingface.co/csukuangfj).
+[csukuangfj](https://huggingface.co/csukuangfj) and, for Turkish,
+[atasoglu](https://huggingface.co/atasoglu).
 
 The dyslexia-friendly typeface is
 [OpenDyslexic](https://opendyslexic.org) by Abbie Gonzalez, bundled under the

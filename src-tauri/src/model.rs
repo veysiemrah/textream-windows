@@ -133,6 +133,25 @@ pub const MODELS: &[SpeechModel] = &[
         download_bytes: 156_200_000,
     },
     SpeechModel {
+        id: "tr",
+        label: "Turkish",
+        language: "tr",
+        repo: "atasoglu/seda-v0.1",
+        files: ModelFiles {
+            encoder: "encoder.int8.onnx",
+            decoder: "decoder.onnx",
+            joiner: "joiner.int8.onnx",
+            tokens: "tokens.txt",
+        },
+        hashes: ModelHashes {
+            encoder: "2596861911cec5ca1de31adc12a7fc983d05395434f92239f4e007eeae3a5dcc",
+            decoder: "dc28b7ae3f5e67c0daa2d51886dae2ac8287a25333f46a363f3684b3cd1220c9",
+            joiner: "b4d1cff7c410d14c85c143885954be09a6a4a076cd35d22aeba58655665582bb",
+            tokens: "f6e134fa357558d0c4ab56fbe380323c30e3d50a13fe402a68328d5a13c2236b",
+        },
+        download_bytes: 72_800_000,
+    },
+    SpeechModel {
         id: "zh",
         label: "Chinese (Mandarin)",
         language: "zh",

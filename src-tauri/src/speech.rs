@@ -297,8 +297,11 @@ mod tests {
     /// zeroed — get a field wrong and this is where it shows up, rather than in
     /// front of a presenter mid-take.
     ///
+    /// `TEXTREAM_TEST_MODEL_ID` picks which registry entry the directory holds,
+    /// defaulting to the default model.
+    ///
     /// ```text
-    /// TEXTREAM_TEST_MODEL_DIR=<dir> cargo test -p textream -- --ignored
+    /// TEXTREAM_TEST_MODEL_DIR=<dir> TEXTREAM_TEST_MODEL_ID=tr cargo test -p textream -- --ignored
     /// ```
     #[test]
     #[ignore = "needs a downloaded speech model"]
@@ -306,13 +309,11 @@ mod tests {
         let Ok(directory) = std::env::var("TEXTREAM_TEST_MODEL_DIR") else {
             panic!("set TEXTREAM_TEST_MODEL_DIR to a directory holding a model");
         };
-        let files = ModelFiles {
-            encoder: "encoder-epoch-99-avg-1.int8.onnx",
-            decoder: "decoder-epoch-99-avg-1.int8.onnx",
-            joiner: "joiner-epoch-99-avg-1.int8.onnx",
-            tokens: "tokens.txt",
+        let model = match std::env::var("TEXTREAM_TEST_MODEL_ID") {
+            Ok(id) => crate::model::find(&id).unwrap_or_else(|| panic!("no model {id}")),
+            Err(_) => crate::model::default_model(),
         };
-        let paths = ModelPaths::in_directory(Path::new(&directory), &files);
+        let paths = ModelPaths::in_directory(Path::new(&directory), &model.files);
         assert!(paths.all_present(), "model files missing in {directory}");
 
         let mut recognizer = Recognizer::new(&paths).expect("recogniser should load");

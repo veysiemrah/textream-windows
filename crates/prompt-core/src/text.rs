@@ -118,6 +118,27 @@ pub fn infer_direction(text: &str) -> TextDirection {
     TextDirection::LeftToRight
 }
 
+/// Lowercases `text` for comparison, folding the four Turkish i's together.
+///
+/// Unicode's default lowercase is wrong for Turkish in both directions: `I`
+/// becomes `i` where a Turkish recogniser writes `ı`, and `İ` becomes `i` plus
+/// a combining dot that no transcript ever contains. So a script line such as
+/// "IŞIK" or "İSTANBUL" would never match what was said. Folding `I`, `İ`, `i`
+/// and `ı` to one `i` fixes Turkish without needing to know the language, and
+/// costs the matcher nothing elsewhere — it is fuzzy about single letters
+/// anyway, and no other language contrasts dotted with dotless i.
+pub fn fold_case(text: &str) -> String {
+    let mut folded = String::with_capacity(text.len());
+    for c in text.chars().flat_map(char::to_lowercase) {
+        match c {
+            'ı' => folded.push('i'),
+            '\u{0307}' if folded.ends_with('i') => {}
+            other => folded.push(other),
+        }
+    }
+    folded
+}
+
 /// Splits `text` into owned grapheme clusters — the unit every offset in this
 /// crate is measured in.
 pub fn graphemes(text: &str) -> Vec<String> {
@@ -186,6 +207,27 @@ mod tests {
     #[test]
     fn emoji_is_a_single_grapheme() {
         assert_eq!(graphemes("a👍🏽b").len(), 3);
+    }
+
+    #[test]
+    fn fold_case_unifies_the_turkish_i() {
+        assert_eq!(fold_case("IŞIK"), fold_case("ışık"));
+        assert_eq!(fold_case("İSTANBUL"), "istanbul");
+        assert_eq!(fold_case("I\u{0307}stanbul"), "istanbul");
+        assert_eq!(fold_case("Iğdır"), "iğdir");
+    }
+
+    #[test]
+    fn fold_case_keeps_one_grapheme_per_grapheme() {
+        for g in ["İ", "I", "ı", "Ş", "Ğ", "Ö", "Ü", "Ç"] {
+            assert_eq!(graphemes(&fold_case(g)).len(), 1, "{g}");
+        }
+    }
+
+    #[test]
+    fn fold_case_leaves_other_combining_dots_alone() {
+        // U+0307 after a letter other than i is real content and must survive.
+        assert_eq!(fold_case("a\u{0307}"), "a\u{0307}");
     }
 
     #[test]
