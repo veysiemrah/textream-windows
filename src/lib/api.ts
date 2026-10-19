@@ -301,6 +301,19 @@ export const windowBackdrop = () => invoke<BackdropKind>("window_backdrop");
 
 export type ShortcutAction = "toggle" | "hold" | "mute";
 
+/**
+ * What the taskbar strip's buttons need to show that the overlay cannot see
+ * itself. Its buttons send a {@link ShortcutAction} back, so they take the
+ * same path as the global shortcuts.
+ */
+export interface TransportView {
+  muted: boolean;
+  /** The mode uses the microphone, so muting means something. */
+  microphone: boolean;
+}
+
+export const EVENT_TRANSPORT = "textream://transport";
+
 export const EVENT_SHORTCUT = "textream://shortcut";
 
 /** Global shortcut names paired with the keys they are bound to. */

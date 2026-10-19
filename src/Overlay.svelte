@@ -1,17 +1,21 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { listen } from "@tauri-apps/api/event";
+  import { emitTo, listen } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import {
     EVENT_APPEARANCE,
     EVENT_PLACEMENT,
     EVENT_PROGRESS,
     EVENT_SCRIPT,
+    EVENT_SHORTCUT,
+    EVENT_TRANSPORT,
     jumpToWord,
     type AppearanceView,
     type Placement,
     type ProgressView,
     type ScriptView,
+    type ShortcutAction,
+    type TransportView,
   } from "./lib/api";
 
   let script = $state<ScriptView | null>(null);
@@ -20,8 +24,22 @@
   let viewport: HTMLDivElement | undefined = $state();
   let placement = $state<Placement>("topCenter");
 
+  let transport = $state<TransportView>({ muted: false, microphone: false });
+
   /** Only the floating prompter is the presenter's to move and resize. */
   const floating = $derived(placement === "floating");
+
+  /** Above the taskbar the overlay carries controls, never script text. */
+  const strip = $derived(placement === "transportStrip");
+
+  /**
+   * The strip's buttons send the global shortcuts' own actions to the editor,
+   * which owns the session, so a click there does exactly what the shortcut
+   * or the editor's button does.
+   */
+  function send(action: ShortcutAction) {
+    void emitTo("main", EVENT_SHORTCUT, action);
+  }
 
   const EDGES = [
     { dir: "North", cls: "n" },
@@ -110,6 +128,9 @@
       listen<Placement>(EVENT_PLACEMENT, (event) => {
         placement = event.payload;
       }),
+      listen<TransportView>(EVENT_TRANSPORT, (event) => {
+        transport = event.payload;
+      }),
     ]);
     return () => {
       void unlisten.then((offs) => offs.forEach((off) => off()));
@@ -140,7 +161,8 @@
   class="pill"
   class:floating
   class:fullscreen={placement === "fullscreen"}
-  dir={script?.direction ?? "ltr"}
+  class:strip
+  dir={strip ? "ltr" : (script?.direction ?? "ltr")}
   {style}
 >
   {#if floating}
@@ -154,7 +176,38 @@
       ></div>
     {/each}
   {/if}
-  {#if script && script.words.length > 0}
+  {#if strip}
+    <button class="control stop" title="Stop the prompter" onclick={() => send("toggle")}
+      >Stop</button
+    >
+    <button
+      class="control"
+      class:on={progress?.paused}
+      title={progress?.paused ? "Carry on from here" : "Hold the position"}
+      onclick={() => send("hold")}>{progress?.paused ? "Resume" : "Hold"}</button
+    >
+    {#if transport.microphone}
+      <button
+        class="control"
+        class:on={transport.muted}
+        title={transport.muted ? "Turn the microphone back on" : "Stop listening for now"}
+        onclick={() => send("mute")}>{transport.muted ? "Unmute" : "Mute"}</button
+      >
+    {/if}
+    <div class="strip-rail">
+      <span
+        style="width:{script && script.words.length
+          ? ((progress?.wordProgress ?? 0) / script.words.length) * 100
+          : 0}%"
+      ></span>
+    </div>
+    {#if script && script.words.length > 0}
+      <span class="count"
+        >{Math.min(script.words.length, (progress?.activeWord ?? -1) + 1)}/{script
+          .words.length}</span
+      >
+    {/if}
+  {:else if script && script.words.length > 0}
     <div class="viewport" bind:this={viewport} onwheel={catchUp}>
       <p class="words">
         <!-- The author's line breaks, drawn but never tracked: a blank line
@@ -251,6 +304,59 @@
     padding-left: calc(var(--fullscreen-margin) * 100vw);
     padding-right: calc(var(--fullscreen-margin) * 100vw);
     border-radius: 0;
+  }
+
+  /* Controls only: the strip sits by the taskbar, where reading would pull
+     the presenter's eyes off the camera. */
+  .pill.strip {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    padding: 0 8px;
+    border-radius: 22px;
+    font: 600 12px / 1 var(--font-stack);
+  }
+  .control {
+    height: 28px;
+    padding: 0 14px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.85);
+    font: inherit;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+  }
+  .control:hover {
+    background: rgba(255, 255, 255, 0.12);
+  }
+  .control.on {
+    border-color: var(--highlight);
+    color: var(--highlight);
+  }
+  .control.stop {
+    background: var(--highlight);
+    border-color: transparent;
+    color: #0a0b0d;
+  }
+  .strip-rail {
+    flex: 1;
+    height: 3px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+  }
+  .strip-rail span {
+    display: block;
+    height: 100%;
+    background: var(--highlight);
+    transition: width 120ms linear;
+  }
+  .count {
+    min-width: 44px;
+    color: rgba(255, 255, 255, 0.5);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
   }
 
   .pill.floating {

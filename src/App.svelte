@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import { listen } from "@tauri-apps/api/event";
+  import { emitTo, listen } from "@tauri-apps/api/event";
   import * as api from "./lib/api";
   import * as files from "./lib/files";
   import * as notify from "./lib/notify";
@@ -123,6 +123,20 @@ Today we are shipping something I have wanted for a long time.
   );
   const speechReady = $derived(selectedModel?.installed === true);
   const needsMicrophone = $derived(settings.mode !== "classic");
+
+  /**
+   * Whether clicks pass through the overlay. Never on the taskbar strip: it
+   * is nothing but buttons, and buttons that ignore clicks are no use.
+   */
+  const clickThrough = () =>
+    settings.placement !== "transportStrip" && settings.clickThrough;
+
+  // The taskbar strip shows mute state it cannot see from the session, so it
+  // is told whenever that changes during a take.
+  $effect(() => {
+    const view: api.TransportView = { muted, microphone: needsMicrophone };
+    if (running) void emitTo("overlay", api.EVENT_TRANSPORT, view);
+  });
   const modeIndex = $derived(
     Math.max(
       0,
@@ -394,7 +408,7 @@ Today we are shipping something I have wanted for a long time.
     }
 
     await api.showOverlay(geometry());
-    await api.setClickThrough(settings.clickThrough);
+    await api.setClickThrough(clickThrough());
     await api.setKeepAwake(settings.keepScreenAwake);
     const accepted = await api.setHideFromCapture(settings.hideFromCapture);
     if (settings.hideFromCapture && !accepted) {
@@ -472,7 +486,10 @@ Today we are shipping something I have wanted for a long time.
 
   async function pushGeometry() {
     persist();
-    if (running) await api.setOverlayGeometry(geometry());
+    if (!running) return;
+    await api.setOverlayGeometry(geometry());
+    // Switching to or from the taskbar strip changes whether clicks must land.
+    await api.setClickThrough(clickThrough());
   }
 
   async function pushSpeed() {
@@ -488,7 +505,7 @@ Today we are shipping something I have wanted for a long time.
 
   async function pushClickThrough() {
     persist();
-    if (running) await api.setClickThrough(settings.clickThrough);
+    if (running) await api.setClickThrough(clickThrough());
   }
 
   async function pushKeepAwake() {
@@ -599,16 +616,24 @@ Today we are shipping something I have wanted for a long time.
             <option value="transportStrip">Strip above the taskbar</option>
           </select>
         </label>
-        <p class="note">
-          {#if settings.placement === "floating"}
+        {#if settings.placement === "floating"}
+          <p class="note">
             Drag the bar along the prompter's top to move it, and its edges to
             resize it. Clicks have to reach it, so turn off "Let clicks pass
             through" below while you place it.
-          {:else}
+          </p>
+        {:else if settings.placement === "topCenter"}
+          <p class="note">
             The prompter sits at the top of the screen because that is where
-            your camera is. The taskbar strip carries controls only.
-          {/if}
-        </p>
+            your camera is.
+          </p>
+        {:else if settings.placement === "transportStrip"}
+          <p class="note">
+            A strip of controls above the taskbar — stop, hold and mute — with
+            no script text, since reading down there would take your eyes off
+            the camera. It always takes clicks.
+          </p>
+        {/if}
 
         {#if settings.placement === "fullscreen"}
           <!-- Fullscreen fills the display, so width and height mean nothing
@@ -902,10 +927,6 @@ Today we are shipping something I have wanted for a long time.
         <p class="note">
           Recognition runs on this machine. Nothing is uploaded, and there is no
           account.
-        </p>
-        <p class="note">
-          Turkish is not here yet — no streaming model has been published for it
-          in a format this engine can load.
         </p>
       </section>
     </div>
