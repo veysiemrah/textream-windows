@@ -15,7 +15,7 @@
 //!   talking to the session behind its mutex.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -23,10 +23,10 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::SampleFormat;
+use cpal::{ErrorKind, SampleFormat};
 use prompt_core::normalized_rms;
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::session::SessionState;
 use crate::speech::Recognizer;
@@ -44,6 +44,39 @@ const QUEUE_CHUNKS: usize = 64;
 /// Fast enough that a waveform looks live, slow enough that reporting is not
 /// competing with speech decoding for the same thread.
 const BROADCAST_INTERVAL: Duration = Duration::from_millis(50);
+
+/// How long `start` waits for the capture thread to say the stream is open.
+const OPEN_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Attempts to reopen a microphone that dropped out mid-take, and the pause
+/// between them. A few seconds in all: long enough to ride out a USB device
+/// re-enumerating or a driver resetting, short enough that a presenter is
+/// told promptly when it is really gone.
+const REOPEN_ATTEMPTS: usize = 6;
+const REOPEN_DELAY: Duration = Duration::from_millis(500);
+
+/// Tells the editor what happened to the microphone during a take.
+pub const EVENT_MICROPHONE: &str = "textream://microphone";
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum MicrophoneEvent {
+    /// The stream died; reopening is under way.
+    Reconnecting,
+    /// Capture resumed, possibly on the system default device.
+    Reconnected { device: String },
+    /// Reopening gave up. The take keeps running, deaf.
+    Lost { message: String },
+}
+
+/// Whether a stream error means the stream is dead and must be rebuilt.
+///
+/// An unplugged device or a driver reset arrives as one of these two; the
+/// rest (a refused real-time priority, a default-route change cpal already
+/// followed) leave the stream working and only deserve a line in the log.
+fn needs_reopen(kind: ErrorKind) -> bool {
+    matches!(kind, ErrorKind::DeviceNotAvailable | ErrorKind::StreamInvalidated)
+}
 
 /// What the capture path is actually doing.
 ///
@@ -161,6 +194,144 @@ fn device_label(device: &cpal::Device) -> String {
         .unwrap_or_else(|| "microphone".to_string())
 }
 
+fn input_config(device: &cpal::Device) -> Result<cpal::SupportedStreamConfig, String> {
+    device.default_input_config().map_err(|error| {
+        format!("Could not read the microphone's format ({error}). Try a different microphone.")
+    })
+}
+
+/// Everything the capture thread needs to open — and reopen — the stream.
+struct Capture {
+    app: AppHandle,
+    /// The device the take asked for, re-resolved on every reopen so a
+    /// device that comes back is picked up again, and the default otherwise.
+    device_id: Option<String>,
+    sender: SyncSender<Vec<f32>>,
+    diagnostics: Arc<Diagnostics>,
+    log_path: Option<PathBuf>,
+    sample_rate: Arc<AtomicU32>,
+    /// Raised by the stream's error callback when the stream has died.
+    lost: Arc<AtomicBool>,
+}
+
+impl Capture {
+    /// Opens the stream, reports whether that worked through `opened`, then
+    /// keeps it alive — reopening it if it dies — until `stop` is raised.
+    ///
+    /// The stream lives exactly as long as this thread: `cpal::Stream` is
+    /// `!Send` on Windows, so it cannot be handed back to the caller to hold.
+    fn run(
+        self,
+        device: cpal::Device,
+        config: cpal::SupportedStreamConfig,
+        stop: &AtomicBool,
+        opened: SyncSender<Result<(), String>>,
+    ) {
+        let mut stream = match self.open(&device, config) {
+            Ok(stream) => {
+                let _ = opened.send(Ok(()));
+                stream
+            }
+            Err(message) => {
+                let _ = opened.send(Err(message));
+                return;
+            }
+        };
+
+        while !stop.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_millis(50));
+            if !self.lost.swap(false, Ordering::Relaxed) {
+                continue;
+            }
+            drop(stream);
+            self.notify(MicrophoneEvent::Reconnecting);
+            match self.reopen(stop) {
+                Some(reopened) => stream = reopened,
+                None => {
+                    if !stop.load(Ordering::Relaxed) {
+                        self.notify(MicrophoneEvent::Lost {
+                            message: "The microphone was disconnected and could not be \
+                                      reopened. Reconnect it, then stop and start again."
+                                .to_string(),
+                        });
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Builds and starts a stream on `device`, and records its format.
+    fn open(
+        &self,
+        device: &cpal::Device,
+        config: cpal::SupportedStreamConfig,
+    ) -> Result<cpal::Stream, String> {
+        let rate = config.sample_rate();
+        let channels = config.channels() as usize;
+        let format = config.sample_format();
+        let stream = build_stream(
+            device,
+            config.into(),
+            format,
+            channels,
+            self.sender.clone(),
+            self.diagnostics.clone(),
+            self.log_path.clone(),
+            self.lost.clone(),
+        )?;
+        stream
+            .play()
+            .map_err(|error| format!("Could not start the microphone ({error})."))?;
+
+        self.sample_rate.store(rate, Ordering::Relaxed);
+        *self.diagnostics.format.lock().unwrap() = format!(
+            "{} · {} Hz · {} channel{} · {:?}",
+            device_label(device),
+            rate,
+            channels,
+            if channels == 1 { "" } else { "s" },
+            format
+        );
+        Ok(stream)
+    }
+
+    /// Tries to get capture going again after the stream died.
+    fn reopen(&self, stop: &AtomicBool) -> Option<cpal::Stream> {
+        for _ in 0..REOPEN_ATTEMPTS {
+            std::thread::sleep(REOPEN_DELAY);
+            if stop.load(Ordering::Relaxed) {
+                return None;
+            }
+            let host = cpal::default_host();
+            let attempt = resolve_device(&host, self.device_id.as_deref()).and_then(|device| {
+                let config = input_config(&device)?;
+                self.open(&device, config).map(|stream| (stream, device_label(&device)))
+            });
+            match attempt {
+                Ok((stream, device)) => {
+                    self.lost.store(false, Ordering::Relaxed);
+                    self.notify(MicrophoneEvent::Reconnected { device });
+                    return Some(stream);
+                }
+                Err(message) => self.log(&format!("reopening the microphone failed: {message}")),
+            }
+        }
+        None
+    }
+
+    fn notify(&self, event: MicrophoneEvent) {
+        self.log(&format!("microphone: {event:?}"));
+        let _ = self.app.emit_to("main", EVENT_MICROPHONE, event);
+    }
+
+    fn log(&self, line: &str) {
+        if let Some(path) = &self.log_path {
+            crate::diagnostics::append(path, line);
+        }
+    }
+}
+
 /// A running capture session. Dropping it stops the microphone.
 pub struct AudioEngine {
     stop: Arc<AtomicBool>,
@@ -180,23 +351,13 @@ impl AudioEngine {
     ) -> Result<Self, String> {
         let host = cpal::default_host();
         let device = resolve_device(&host, device_id.as_deref())?;
-        let device_name = device_label(&device);
-        let config = device.default_input_config().map_err(|error| {
-            format!("Could not read the microphone's format ({error}). Try a different microphone.")
-        })?;
+        let config = input_config(&device)?;
 
-        let sample_rate = config.sample_rate();
-        let channels = config.channels() as usize;
+        // Shared with the worker, because a reopened device may run at a
+        // different rate than the one the take started on.
+        let sample_rate = Arc::new(AtomicU32::new(config.sample_rate()));
         let (sender, receiver) = sync_channel::<Vec<f32>>(QUEUE_CHUNKS);
-
         let diagnostics = Arc::new(Diagnostics::default());
-        *diagnostics.format.lock().unwrap() = format!(
-            "{device_name} · {} Hz · {} channel{} · {:?}",
-            sample_rate,
-            channels,
-            if channels == 1 { "" } else { "s" },
-            config.sample_format()
-        );
 
         // Best-effort: a device dropping out mid-session is worth a trace in
         // the crash log, but failing to resolve that log's own path is not a
@@ -213,6 +374,7 @@ impl AudioEngine {
             let stop = stop.clone();
             let muted = muted.clone();
             let diagnostics = diagnostics.clone();
+            let sample_rate = sample_rate.clone();
             std::thread::Builder::new()
                 .name("textream-speech".into())
                 .spawn(move || {
@@ -229,45 +391,51 @@ impl AudioEngine {
                 .map_err(|error| error.to_string())?
         };
 
+        let (opened, open_result) = sync_channel::<Result<(), String>>(1);
         let capture = {
+            let capture = Capture {
+                app,
+                device_id,
+                sender,
+                diagnostics: diagnostics.clone(),
+                log_path,
+                sample_rate,
+                lost: Arc::new(AtomicBool::new(false)),
+            };
             let stop = stop.clone();
-            let diagnostics = diagnostics.clone();
             std::thread::Builder::new()
                 .name("textream-capture".into())
-                .spawn(move || {
-                    let format = config.sample_format();
-                    let stream_config: cpal::StreamConfig = config.into();
-                    let stream = build_stream(
-                        &device,
-                        stream_config,
-                        format,
-                        channels,
-                        sender,
-                        diagnostics,
-                        log_path,
-                    );
-                    let Ok(stream) = stream else { return };
-                    if stream.play().is_err() {
-                        return;
-                    }
-                    // The stream stays alive exactly as long as this thread
-                    // does; `cpal::Stream` is `!Send`, so it cannot be handed
-                    // back to the caller to hold.
-                    while !stop.load(Ordering::Relaxed) {
-                        std::thread::sleep(Duration::from_millis(50));
-                    }
-                    drop(stream);
-                })
+                .spawn(move || capture.run(device, config, &stop, opened))
                 .map_err(|error| error.to_string())?
         };
 
-        Ok(Self {
+        let engine = Self {
             stop,
             muted,
             diagnostics,
             capture: Some(capture),
             worker: Some(worker),
-        })
+        };
+        // The stream is built on the capture thread, so that is where an
+        // unopenable device is found out. Waiting for its verdict is what lets
+        // a start fail with the reason instead of succeeding and staying deaf.
+        // Dropping `engine` on failure stops and joins both threads.
+        match open_result.recv_timeout(OPEN_TIMEOUT) {
+            Ok(Ok(())) => Ok(engine),
+            Ok(Err(message)) => Err(message),
+            Err(_) => {
+                // A driver that hangs while opening would hang a join too, so
+                // the threads are told to stop and left to finish on their
+                // own rather than waited for.
+                let mut engine = engine;
+                engine.stop.store(true, Ordering::Relaxed);
+                engine.capture.take();
+                engine.worker.take();
+                Err("The microphone did not start. Try again, or choose a different \
+                     microphone in Settings."
+                    .to_string())
+            }
+        }
     }
 
     /// Stops metering and transcribing without closing the device.
@@ -299,6 +467,7 @@ impl Drop for AudioEngine {
 }
 
 /// Builds an input stream for whichever sample format the device offers.
+#[allow(clippy::too_many_arguments)]
 fn build_stream(
     device: &cpal::Device,
     config: cpal::StreamConfig,
@@ -307,14 +476,19 @@ fn build_stream(
     sender: SyncSender<Vec<f32>>,
     diagnostics: Arc<Diagnostics>,
     log_path: Option<PathBuf>,
+    lost: Arc<AtomicBool>,
 ) -> Result<cpal::Stream, String> {
     // A stream error is a device dropping out mid-session — driver crash,
     // unplugged cable — the kind of thing a presenter needs to have a trace in
     // the crash log, but failing to resolve that log's own path is not a
-    // reason to refuse to open the microphone at all.
-    let on_error = move |error| {
+    // reason to refuse to open the microphone at all. A dead stream is also
+    // flagged, for the capture thread to reopen.
+    let on_error = move |error: cpal::Error| {
         if let Some(path) = &log_path {
             crate::diagnostics::append(path, &format!("microphone stream error: {error}"));
+        }
+        if needs_reopen(error.kind()) {
+            lost.store(true, Ordering::Relaxed);
         }
     };
 
@@ -402,7 +576,7 @@ fn run_worker(
     app: AppHandle,
     receiver: Receiver<Vec<f32>>,
     mut recognizer: Option<Recognizer>,
-    sample_rate: u32,
+    sample_rate: Arc<AtomicU32>,
     stop: Arc<AtomicBool>,
     muted: Arc<AtomicBool>,
     diagnostics: Arc<Diagnostics>,
@@ -450,7 +624,7 @@ fn run_worker(
             continue;
         };
 
-        recognizer.accept(sample_rate, &chunk);
+        recognizer.accept(sample_rate.load(Ordering::Relaxed), &chunk);
         // Only read the transcript when the network actually ran. Fetching it
         // on every chunk copies the whole string a hundred times a second for
         // a value that changes perhaps three times a second.
@@ -598,6 +772,29 @@ mod tests {
         forward([0.3, 0.4].into_iter(), 1, &sender, &diagnostics);
 
         assert_eq!(diagnostics.dropped.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn only_a_dead_stream_is_reopened() {
+        assert!(needs_reopen(ErrorKind::DeviceNotAvailable));
+        assert!(needs_reopen(ErrorKind::StreamInvalidated));
+        // These leave the stream working; reopening would only cause a gap.
+        assert!(!needs_reopen(ErrorKind::RealtimeDenied));
+        assert!(!needs_reopen(ErrorKind::DeviceChanged));
+    }
+
+    #[test]
+    fn microphone_events_carry_their_state_for_the_editor() {
+        let lost = serde_json::to_value(MicrophoneEvent::Lost {
+            message: "gone".into(),
+        })
+        .unwrap();
+        assert_eq!(lost, serde_json::json!({ "state": "lost", "message": "gone" }));
+        let back = serde_json::to_value(MicrophoneEvent::Reconnected {
+            device: "USB".into(),
+        })
+        .unwrap();
+        assert_eq!(back, serde_json::json!({ "state": "reconnected", "device": "USB" }));
     }
 
     #[test]

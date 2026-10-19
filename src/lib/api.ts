@@ -151,6 +151,13 @@ export const EVENT_PROGRESS = "textream://progress";
 export const EVENT_DOWNLOAD = "textream://model-download";
 export const EVENT_APPEARANCE = "textream://appearance";
 export const EVENT_PLACEMENT = "textream://placement";
+export const EVENT_MICROPHONE = "textream://microphone";
+
+/** What happened to the microphone during a take. */
+export type MicrophoneEvent =
+  | { state: "reconnecting" }
+  | { state: "reconnected"; device: string }
+  | { state: "lost"; message: string };
 export const EVENT_OVERLAY_BOUNDS = "textream://overlay-bounds";
 
 /**

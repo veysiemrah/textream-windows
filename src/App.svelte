@@ -188,11 +188,30 @@ Today we are shipping something I have wanted for a long time.
         settings.height = height;
         persist();
       }),
+      listen<api.MicrophoneEvent>(api.EVENT_MICROPHONE, (event) => {
+        onMicrophone(event.payload);
+      }),
     ]);
     return () => {
       void unlisten.then((offs) => offs.forEach((off) => off()));
     };
   });
+
+  /**
+   * A microphone dropping out mid-take. The editor is usually hidden while
+   * presenting, so losing it for good also raises a system notification —
+   * otherwise the presenter would only find out when the highlight stops.
+   */
+  function onMicrophone(event: api.MicrophoneEvent) {
+    if (event.state === "reconnecting") {
+      say("The microphone dropped out. Reconnecting…", "warn");
+    } else if (event.state === "reconnected") {
+      say(`Microphone back: ${event.device}.`);
+    } else {
+      say(event.message, "warn");
+      notify.notifyWarning(event.message);
+    }
+  }
 
   async function onShortcut(action: api.ShortcutAction) {
     if (action === "toggle") return toggleRun(true);
