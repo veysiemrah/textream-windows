@@ -188,15 +188,17 @@ impl Session {
 
     /// Holds position without releasing the microphone or the overlay.
     ///
-    /// Resuming rebases the transcript window: the presenter almost certainly
-    /// kept talking — that is usually *why* they paused — and a window still
-    /// measured from before the break would match that speech against the
-    /// script and jump the highlight.
+    /// Resuming re-anchors the transcript window: the presenter almost
+    /// certainly kept talking — that is usually *why* they paused — and the
+    /// recogniser's transcript still holds that speech, which would otherwise
+    /// be matched against the script and jump the highlight.
     pub fn set_paused(&mut self, paused: bool) {
         let resuming = self.paused && !paused;
         self.paused = paused;
         if resuming {
-            self.rebase_transcript_window();
+            if let Some(matcher) = self.matcher.as_mut() {
+                matcher.resume_from_current_progress();
+            }
         }
     }
 
@@ -211,11 +213,16 @@ impl Session {
 
     /// Folds a transcript window in. Ignored outside Word Tracking.
     pub fn feed_transcript(&mut self, transcript: &str) -> ProgressView {
-        if self.advancing() && self.mode == Mode::WordTracking {
+        if self.mode == Mode::WordTracking {
             if let Some(matcher) = self.matcher.as_mut() {
-                matcher.match_transcript(transcript);
-                let offset = matcher.recognized_character_count();
-                self.sync_scroller_to(offset);
+                if self.running && !self.paused {
+                    matcher.match_transcript(transcript);
+                    let offset = matcher.recognized_character_count();
+                    self.sync_scroller_to(offset);
+                } else {
+                    // Held: remember what was said, so resuming can skip it.
+                    matcher.observe_transcript(transcript);
+                }
             }
         }
         self.progress()
@@ -496,6 +503,23 @@ mod tests {
         // rather than being measured from the origin.
         assert_eq!(session.progress().character_offset, before);
         assert!(session.feed_transcript("gamma").character_offset >= before);
+    }
+
+    #[test]
+    fn speech_during_a_pause_is_skipped_when_the_stream_carries_on() {
+        let mut session = loaded("alpha beta gamma delta epsilon zeta eta theta");
+        session.start();
+        session.feed_transcript("alpha beta");
+        let before = session.progress().character_offset;
+
+        session.set_paused(true);
+        session.feed_transcript("alpha beta gamma delta epsilon");
+        session.set_paused(false);
+        // No recogniser endpoint, so its transcript still holds the break.
+        let after = session
+            .feed_transcript("alpha beta gamma delta epsilon")
+            .character_offset;
+        assert_eq!(after, before);
     }
 
     #[test]

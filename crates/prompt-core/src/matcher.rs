@@ -32,6 +32,10 @@ const RECENT_CAPACITY: usize = 3;
 /// Two candidates this close together count as the same position.
 const CONFIRMATION_RADIUS: usize = 10;
 
+/// How much of the transcript anchor a recogniser revision may rewrite and
+/// still be trimmed away, in characters.
+const ANCHOR_SLACK: usize = 24;
+
 /// Tracks reading position within a [`PromptScript`] from speech transcripts.
 #[derive(Debug, Clone)]
 pub struct PromptMatcher {
@@ -44,6 +48,12 @@ pub struct PromptMatcher {
     recent: Vec<usize>,
     /// Lowercased graphemes of the source, cached for the character pass.
     lowered: Vec<String>,
+    /// The newest transcript seen, matched or not.
+    last_transcript: String,
+    /// The transcript as it stood at the last jump or resume. The recogniser's
+    /// stream carries on across both, so everything it heard before then is
+    /// trimmed off rather than matched against the script at the new position.
+    anchor: String,
 }
 
 impl PromptMatcher {
@@ -65,6 +75,8 @@ impl PromptMatcher {
             match_start_offset: start,
             recent: Vec::with_capacity(RECENT_CAPACITY),
             lowered,
+            last_transcript: String::new(),
+            anchor: String::new(),
         }
     }
 
@@ -101,6 +113,28 @@ impl PromptMatcher {
     pub fn restart_from_current_progress(&mut self) {
         self.match_start_offset = self.recognized;
         self.recent.clear();
+        self.last_transcript.clear();
+        self.anchor.clear();
+    }
+
+    /// Re-anchors the transcript window to the current position while the
+    /// recogniser's stream carries on — resuming after a pause.
+    ///
+    /// Unlike [`restart_from_current_progress`](Self::restart_from_current_progress)
+    /// the next transcript still holds everything said so far, including
+    /// during the break, so that part is trimmed off instead of matched.
+    pub fn resume_from_current_progress(&mut self) {
+        self.match_start_offset = self.recognized;
+        self.recent.clear();
+        self.anchor.clone_from(&self.last_transcript);
+    }
+
+    /// Records a transcript without matching it, so a later resume knows
+    /// what was said while matching was held.
+    pub fn observe_transcript(&mut self, transcript: &str) {
+        if !transcript.is_empty() {
+            transcript.clone_into(&mut self.last_transcript);
+        }
     }
 
     /// Moves the highlight to `offset` — user tapped a word or scrolled.
@@ -114,6 +148,7 @@ impl PromptMatcher {
         self.recognized = target;
         self.match_start_offset = target;
         self.recent.clear();
+        self.anchor.clone_from(&self.last_transcript);
         target
     }
 
@@ -122,6 +157,8 @@ impl PromptMatcher {
     /// `transcript` is everything the recogniser has produced since the last
     /// restart, not just the newest word.
     pub fn match_transcript(&mut self, transcript: &str) -> usize {
+        self.observe_transcript(transcript);
+        let transcript = self.after_anchor(transcript);
         if transcript.is_empty() || self.match_start_offset >= self.source.character_count() {
             return self.recognized;
         }
@@ -163,6 +200,30 @@ impl PromptMatcher {
             self.recognized = candidate;
         }
         self.recognized
+    }
+
+    /// The part of `transcript` spoken after the anchor.
+    ///
+    /// The recogniser revises earlier words as it hears more, so the anchor is
+    /// trimmed by the prefix that survived the revisions — but never by less
+    /// than the anchor minus [`ANCHOR_SLACK`], or one early revision would let
+    /// the whole pre-anchor transcript back in.
+    fn after_anchor<'a>(&self, transcript: &'a str) -> &'a str {
+        if self.anchor.is_empty() {
+            return transcript;
+        }
+        let common = self
+            .anchor
+            .chars()
+            .zip(transcript.chars())
+            .take_while(|(a, b)| a == b)
+            .count();
+        let trim = common.max(self.anchor.chars().count().saturating_sub(ANCHOR_SLACK));
+        let start = transcript
+            .char_indices()
+            .nth(trim)
+            .map_or(transcript.len(), |(index, _)| index);
+        transcript[start..].trim_start()
     }
 
     /// Grapheme-level walk. Returns how far into the remaining source the
@@ -560,6 +621,65 @@ mod tests {
         // A fresh window continues from there rather than restarting at zero.
         m.match_transcript("delta");
         assert!(m.recognized_character_count() >= before);
+    }
+
+    #[test]
+    fn a_jump_back_ignores_what_was_said_before_it() {
+        let mut m = matcher("alpha beta gamma delta epsilon zeta eta theta");
+        m.match_transcript("alpha beta gamma delta");
+        let read_to = m.recognized_character_count();
+        m.jump(0);
+        // The recogniser's stream carries on: its transcript still starts with
+        // the words read before the jump.
+        m.match_transcript("alpha beta gamma delta alpha");
+        assert!(
+            m.recognized_character_count() < read_to,
+            "pre-jump speech re-matched from the new position"
+        );
+    }
+
+    #[test]
+    fn speech_after_a_jump_is_still_followed() {
+        let mut m = matcher("alpha beta gamma delta epsilon zeta eta theta");
+        m.match_transcript("alpha beta");
+        m.jump(17); // "delta"
+        m.match_transcript("alpha beta delta epsilon zeta");
+        assert!(m.recognized_character_count() > "alpha beta gamma delta".len());
+    }
+
+    #[test]
+    fn a_revised_pre_jump_transcript_does_not_leak_back_in() {
+        let mut m = matcher("alpha beta gamma delta epsilon zeta eta theta");
+        m.match_transcript("alpha beta gamma delta");
+        let read_to = m.recognized_character_count();
+        m.jump(0);
+        // The recogniser rewrote its newest word after the jump.
+        m.match_transcript("alpha beta gamma delt alpha");
+        assert!(m.recognized_character_count() < read_to);
+    }
+
+    #[test]
+    fn resuming_ignores_speech_from_the_break() {
+        let mut m = matcher("alpha beta gamma delta epsilon zeta eta theta");
+        m.match_transcript("alpha beta");
+        let held = m.recognized_character_count();
+        // Paused: the transcript grows, but is only observed.
+        m.observe_transcript("alpha beta gamma delta epsilon");
+        m.resume_from_current_progress();
+        m.match_transcript("alpha beta gamma delta epsilon gamma");
+        assert!(m.recognized_character_count() >= held);
+        assert!(m.recognized_character_count() < "alpha beta gamma delta".len());
+    }
+
+    #[test]
+    fn a_fresh_recogniser_stream_is_not_trimmed() {
+        let mut m = matcher("alpha beta gamma delta epsilon zeta eta theta");
+        m.match_transcript("alpha beta gamma delta");
+        m.jump(0);
+        // Endpoint: the recogniser resets and its next transcript starts empty.
+        m.restart_from_current_progress();
+        m.match_transcript("alpha beta");
+        assert!(m.recognized_character_count() >= "alpha beta".len());
     }
 
     #[test]
