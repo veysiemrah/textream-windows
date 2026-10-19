@@ -161,6 +161,9 @@ pub struct Settings {
     pub target: Target,
     pub width: f64,
     pub height: f64,
+    /// Where the floating prompter was last left, in physical pixels.
+    pub floating_x: Option<i32>,
+    pub floating_y: Option<i32>,
     pub hide_from_capture: bool,
     pub click_through: bool,
     pub appearance: Appearance,
@@ -184,6 +187,8 @@ impl Default for Settings {
             target: geometry.target,
             width: geometry.width,
             height: geometry.height,
+            floating_x: geometry.x,
+            floating_y: geometry.y,
             hide_from_capture: true,
             click_through: true,
             appearance: Appearance::default(),

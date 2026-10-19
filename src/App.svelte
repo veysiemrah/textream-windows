@@ -33,6 +33,8 @@ Today we are shipping something I have wanted for a long time.
     target: "followCursor",
     width: 420,
     height: 160,
+    floatingX: null,
+    floatingY: null,
     hideFromCapture: true,
     clickThrough: true,
     appearance: {
@@ -137,6 +139,8 @@ Today we are shipping something I have wanted for a long time.
     target: settings.target,
     width: settings.width,
     height: settings.height,
+    x: settings.floatingX,
+    y: settings.floatingY,
   });
 
   function say(message: string, kind: "info" | "warn" = "info") {
@@ -173,6 +177,16 @@ Today we are shipping something I have wanted for a long time.
       // hands-free start behaves exactly like a clicked one.
       listen<api.ShortcutAction>(api.EVENT_SHORTCUT, (event) => {
         void onShortcut(event.payload);
+      }),
+      // The floating prompter was dragged or resized on screen. Settings live
+      // here, so this is where that lands — and the sliders follow it.
+      listen<api.OverlayBounds>(api.EVENT_OVERLAY_BOUNDS, (event) => {
+        const { x, y, width, height } = event.payload;
+        settings.floatingX = x;
+        settings.floatingY = y;
+        settings.width = width;
+        settings.height = height;
+        persist();
       }),
     ]);
     return () => {
@@ -542,8 +556,14 @@ Today we are shipping something I have wanted for a long time.
           </select>
         </label>
         <p class="note">
-          The prompter sits at the top of the screen because that is where your
-          camera is. The taskbar strip carries controls only.
+          {#if settings.placement === "floating"}
+            Drag the bar along the prompter's top to move it, and its edges to
+            resize it. Clicks have to reach it, so turn off "Let clicks pass
+            through" below while you place it.
+          {:else}
+            The prompter sits at the top of the screen because that is where
+            your camera is. The taskbar strip carries controls only.
+          {/if}
         </p>
 
         <label class="field">
@@ -551,7 +571,7 @@ Today we are shipping something I have wanted for a long time.
           <input
             type="range"
             min="280"
-            max="500"
+            max="1200"
             bind:value={settings.width}
             oninput={pushGeometry}
           />

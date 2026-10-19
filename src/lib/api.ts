@@ -24,9 +24,22 @@ export type Target = "followCursor" | { fixed: number };
 export interface Geometry {
   placement: Placement;
   target: Target;
-  /** Logical pixels, clamped to 280..500 in Rust. */
+  /** Logical pixels, clamped to 280..1200 in Rust. */
   width: number;
   /** Logical pixels, clamped to 100..400 in Rust. */
+  height: number;
+  /** Floating only: where it was last left, in physical pixels. */
+  x: number | null;
+  y: number | null;
+}
+
+/** The floating overlay's bounds after the presenter moved or resized it. */
+export interface OverlayBounds {
+  /** Physical pixels. */
+  x: number;
+  y: number;
+  /** Logical pixels. */
+  width: number;
   height: number;
 }
 
@@ -94,6 +107,9 @@ export interface Settings {
   target: Target;
   width: number;
   height: number;
+  /** Where the floating prompter was last left, in physical pixels. */
+  floatingX: number | null;
+  floatingY: number | null;
   hideFromCapture: boolean;
   clickThrough: boolean;
   appearance: Appearance;
@@ -132,6 +148,8 @@ export const EVENT_SCRIPT = "textream://script";
 export const EVENT_PROGRESS = "textream://progress";
 export const EVENT_DOWNLOAD = "textream://model-download";
 export const EVENT_APPEARANCE = "textream://appearance";
+export const EVENT_PLACEMENT = "textream://placement";
+export const EVENT_OVERLAY_BOUNDS = "textream://overlay-bounds";
 
 /**
  * Whether no settings file has ever been written.

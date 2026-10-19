@@ -29,7 +29,7 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use audio::{AudioEngine, DiagnosticsView, InputDevice};
 use backdrop::Backdrop;
 use model::{DownloadProgress, ModelStatus};
-use overlay::Geometry;
+use overlay::{Geometry, Placement};
 use session::{Mode, ProgressView, ScriptView, SessionState};
 use settings::Settings;
 use speech::Recognizer;
@@ -41,6 +41,8 @@ const EVENT_SCRIPT: &str = "textream://script";
 const EVENT_PROGRESS: &str = "textream://progress";
 const EVENT_DOWNLOAD: &str = "textream://model-download";
 const EVENT_APPEARANCE: &str = "textream://appearance";
+const EVENT_PLACEMENT: &str = "textream://placement";
+const EVENT_OVERLAY_BOUNDS: &str = "textream://overlay-bounds";
 
 /// The running capture session, if any.
 #[derive(Default)]
@@ -48,6 +50,53 @@ struct AudioState(Mutex<Option<AudioEngine>>);
 
 /// The backdrop the compositor accepted for the main window.
 struct BackdropState(Mutex<Backdrop>);
+
+/// How the overlay is currently placed, so its move and resize events can
+/// tell a presenter's drag apart from the app positioning it.
+#[derive(Default)]
+struct PlacementState(Mutex<Placement>);
+
+/// The floating overlay's bounds after the presenter moved or resized it.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OverlayBounds {
+    /// Physical pixels, as [`Geometry::x`] stores them.
+    x: i32,
+    y: i32,
+    /// Logical pixels, as the width and height settings are.
+    width: f64,
+    height: f64,
+}
+
+/// Places the overlay, first recording the placement so the move this causes
+/// is attributed correctly, and tells the overlay whether to show its grips.
+fn place_overlay(app: &AppHandle, geometry: Geometry) -> Result<WebviewWindow, String> {
+    *app.state::<PlacementState>().0.lock().unwrap() = geometry.placement;
+    let window = overlay_window(app)?;
+    overlay::apply(&window, geometry).map_err(|error| error.to_string())?;
+    let _ = app.emit_to(OVERLAY, EVENT_PLACEMENT, geometry.placement);
+    Ok(window)
+}
+
+/// Reports the floating overlay's bounds to the editor, which owns settings.
+fn report_overlay_bounds(app: &AppHandle, window: &WebviewWindow) {
+    if *app.state::<PlacementState>().0.lock().unwrap() != Placement::Floating {
+        return;
+    }
+    let (Ok(position), Ok(size), Ok(scale)) =
+        (window.outer_position(), window.inner_size(), window.scale_factor())
+    else {
+        return;
+    };
+    let size = size.to_logical::<f64>(scale);
+    let bounds = OverlayBounds {
+        x: position.x,
+        y: position.y,
+        width: size.width.round(),
+        height: size.height.round(),
+    };
+    let _ = app.emit_to("main", EVENT_OVERLAY_BOUNDS, bounds);
+}
 
 fn overlay_window(app: &AppHandle) -> Result<WebviewWindow, String> {
     app.get_webview_window(OVERLAY)
@@ -393,8 +442,7 @@ fn remove_speech_model(app: AppHandle, id: String) -> Result<ModelStatus, String
 
 #[tauri::command]
 fn show_overlay(app: AppHandle, geometry: Geometry) -> Result<(), String> {
-    let window = overlay_window(&app)?;
-    overlay::apply(&window, geometry).map_err(|error| error.to_string())?;
+    let window = place_overlay(&app, geometry)?;
     // Plain `show` is safe here only because `WS_EX_NOACTIVATE` is already on
     // the window: the style is what stops this call from yanking focus off
     // whatever the presenter is actually driving.
@@ -411,8 +459,7 @@ fn hide_overlay(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn set_overlay_geometry(app: AppHandle, geometry: Geometry) -> Result<(), String> {
-    let window = overlay_window(&app)?;
-    overlay::apply(&window, geometry).map_err(|error| error.to_string())
+    place_overlay(&app, geometry).map(|_| ())
 }
 
 /// Lets clicks fall through the overlay to the app behind it.
@@ -547,6 +594,7 @@ pub fn run() {
         .manage(SessionState::new())
         .manage(AudioState::default())
         .manage(BackdropState(Mutex::new(Backdrop::None)))
+        .manage(PlacementState::default())
         .setup(|app| {
             let handle = app.handle().clone();
 
@@ -600,6 +648,16 @@ pub fn run() {
                     // the window *is*, not a state that toggles.
                     window_effects::make_non_activating(hwnd.0 as isize);
                 }
+                let reporter = handle.clone();
+                let moved = window.clone();
+                window.on_window_event(move |event| {
+                    if matches!(
+                        event,
+                        tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)
+                    ) {
+                        report_overlay_bounds(&reporter, &moved);
+                    }
+                });
                 let _ = window.hide();
             }
 

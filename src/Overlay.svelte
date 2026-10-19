@@ -1,12 +1,15 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { listen } from "@tauri-apps/api/event";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import {
     EVENT_APPEARANCE,
+    EVENT_PLACEMENT,
     EVENT_PROGRESS,
     EVENT_SCRIPT,
     jumpToWord,
     type AppearanceView,
+    type Placement,
     type ProgressView,
     type ScriptView,
   } from "./lib/api";
@@ -15,6 +18,39 @@
   let progress = $state<ProgressView | null>(null);
   let appearance = $state<AppearanceView | null>(null);
   let viewport: HTMLDivElement | undefined = $state();
+  let placement = $state<Placement>("topCenter");
+
+  /** Only the floating prompter is the presenter's to move and resize. */
+  const floating = $derived(placement === "floating");
+
+  const EDGES = [
+    { dir: "North", cls: "n" },
+    { dir: "South", cls: "s" },
+    { dir: "West", cls: "w" },
+    { dir: "East", cls: "e" },
+    { dir: "NorthWest", cls: "nw" },
+    { dir: "NorthEast", cls: "ne" },
+    { dir: "SouthWest", cls: "sw" },
+    { dir: "SouthEast", cls: "se" },
+  ] as const;
+
+  /**
+   * Window moves and resizes go through the window manager, as in the
+   * editor's own chrome: the overlay is undecorated, so it has no frame of its
+   * own for Windows to hit-test. Only a primary-button press counts.
+   */
+  function beginDrag(event: PointerEvent) {
+    if (event.button !== 0) return;
+    void getCurrentWindow().startDragging();
+  }
+
+  function beginResize(
+    event: PointerEvent,
+    direction: (typeof EDGES)[number]["dir"],
+  ) {
+    if (event.button !== 0) return;
+    void getCurrentWindow().startResizeDragging(direction);
+  }
 
   const activeWord = $derived(progress?.activeWord ?? -1);
 
@@ -67,6 +103,9 @@
       listen<AppearanceView>(EVENT_APPEARANCE, (event) => {
         appearance = event.payload;
       }),
+      listen<Placement>(EVENT_PLACEMENT, (event) => {
+        placement = event.payload;
+      }),
     ]);
     return () => {
       void unlisten.then((offs) => offs.forEach((off) => off()));
@@ -90,7 +129,18 @@
   });
 </script>
 
-<div class="pill" dir={script?.direction ?? "ltr"} {style}>
+<div class="pill" class:floating dir={script?.direction ?? "ltr"} {style}>
+  {#if floating}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="grab" title="Drag to move" onpointerdown={beginDrag}></div>
+    {#each EDGES as edge (edge.cls)}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        class="edge {edge.cls}"
+        onpointerdown={(event) => beginResize(event, edge.dir)}
+      ></div>
+    {/each}
+  {/if}
   {#if script && script.words.length > 0}
     <div class="viewport" bind:this={viewport} onwheel={catchUp}>
       <p class="words">
@@ -169,6 +219,95 @@
       inset 0 0 0 1px rgba(255, 255, 255, 0.06);
     font:
       600 var(--font-size) / 1.65 var(--font-stack);
+  }
+
+  .pill.floating {
+    position: relative;
+    padding-top: 22px;
+  }
+
+  /* The handle the floating prompter is moved by: the full width of the top
+     edge, with a short bar in the middle to say it is there. */
+  .grab {
+    position: absolute;
+    top: 0;
+    left: 18px;
+    right: 18px;
+    height: 18px;
+    cursor: grab;
+    z-index: 1;
+  }
+  .grab::after {
+    content: "";
+    position: absolute;
+    top: 7px;
+    left: 50%;
+    width: 36px;
+    height: 4px;
+    margin-left: -18px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.22);
+  }
+  .grab:hover::after {
+    background: rgba(255, 255, 255, 0.4);
+  }
+
+  .edge {
+    position: absolute;
+    z-index: 2;
+  }
+  .edge.n,
+  .edge.s {
+    left: 12px;
+    right: 12px;
+    height: 5px;
+    cursor: ns-resize;
+  }
+  .edge.n {
+    top: 0;
+  }
+  .edge.s {
+    bottom: 0;
+  }
+  .edge.w,
+  .edge.e {
+    top: 12px;
+    bottom: 12px;
+    width: 5px;
+    cursor: ew-resize;
+  }
+  .edge.w {
+    left: 0;
+  }
+  .edge.e {
+    right: 0;
+  }
+  .edge.nw,
+  .edge.ne,
+  .edge.sw,
+  .edge.se {
+    width: 12px;
+    height: 12px;
+  }
+  .edge.nw {
+    top: 0;
+    left: 0;
+    cursor: nwse-resize;
+  }
+  .edge.ne {
+    top: 0;
+    right: 0;
+    cursor: nesw-resize;
+  }
+  .edge.sw {
+    bottom: 0;
+    left: 0;
+    cursor: nesw-resize;
+  }
+  .edge.se {
+    bottom: 0;
+    right: 0;
+    cursor: nwse-resize;
   }
 
   .viewport {

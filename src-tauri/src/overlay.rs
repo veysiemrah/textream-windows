@@ -11,7 +11,7 @@
 //! exists to prevent. It gets transport controls only.
 
 use serde::{Deserialize, Serialize};
-use tauri::{LogicalSize, Monitor, PhysicalPosition, PhysicalSize, WebviewWindow};
+use tauri::{LogicalSize, Monitor, PhysicalPosition, PhysicalSize, Size, WebviewWindow};
 
 /// Gap between the top edge of the screen and the pill, in logical pixels.
 const TOP_MARGIN: f64 = 8.0;
@@ -22,9 +22,10 @@ const STRIP_HEIGHT: f64 = 44.0;
 /// Gap between the transport strip and the taskbar, in logical pixels.
 const STRIP_BOTTOM_MARGIN: f64 = 12.0;
 
-/// Overlay width bounds, matching the macOS app's slider.
+/// Overlay width bounds. The macOS slider stops at 500, which suits a notch
+/// pill; a floating or top-centre prompter on a wide monitor reads better wider.
 pub const MIN_WIDTH: f64 = 280.0;
-pub const MAX_WIDTH: f64 = 500.0;
+pub const MAX_WIDTH: f64 = 1200.0;
 
 /// Overlay text-area height bounds.
 pub const MIN_HEIGHT: f64 = 100.0;
@@ -66,6 +67,12 @@ pub struct Geometry {
     pub width: f64,
     /// Logical height, clamped to [`MIN_HEIGHT`]..=[`MAX_HEIGHT`].
     pub height: f64,
+    /// Where the presenter last left the floating window, in physical pixels.
+    /// Only Floating reads it; `None` until the window has been placed once.
+    #[serde(default)]
+    pub x: Option<i32>,
+    #[serde(default)]
+    pub y: Option<i32>,
 }
 
 impl Default for Geometry {
@@ -75,6 +82,8 @@ impl Default for Geometry {
             target: Target::default(),
             width: 420.0,
             height: 160.0,
+            x: None,
+            y: None,
         }
     }
 }
@@ -124,10 +133,30 @@ fn resolve_monitor(window: &WebviewWindow, target: Target) -> tauri::Result<Opti
         .or_else(|| monitors.first().cloned()))
 }
 
+/// Whether a window whose top-left corner is at (`x`, `y`) would show enough
+/// of itself on one of `screens` (origin and size, physical pixels) to be
+/// grabbed and dragged back.
+///
+/// A saved position can point at a monitor that has since been unplugged or
+/// rearranged, and restoring it blindly would put the prompter where nobody
+/// can see it, let alone move it.
+fn is_reachable(screens: &[(PhysicalPosition<i32>, PhysicalSize<u32>)], x: i32, y: i32) -> bool {
+    // A point a little inside the top edge — the grab bar lives there.
+    let (grab_x, grab_y) = (x.saturating_add(40), y.saturating_add(8));
+    screens.iter().any(|(origin, size)| {
+        grab_x >= origin.x
+            && grab_x < origin.x + size.width as i32
+            && grab_y >= origin.y
+            && grab_y < origin.y + size.height as i32
+    })
+}
+
 /// Sizes and positions the overlay window for `geometry`.
 ///
-/// Floating placement only resizes — the whole point is that the presenter owns
-/// the position, so re-centring it on every settings change would fight them.
+/// Floating restores the position the presenter left it at rather than
+/// re-centring it: the whole point is that they own where it goes. Only
+/// Floating can be resized by hand; the other placements are sized from
+/// settings, and fullscreen must not be capped by the floating bounds.
 pub fn apply(window: &WebviewWindow, geometry: Geometry) -> tauri::Result<()> {
     let geometry = geometry.clamped();
     let Some(monitor) = resolve_monitor(window, geometry.target)? else {
@@ -138,6 +167,11 @@ pub fn apply(window: &WebviewWindow, geometry: Geometry) -> tauri::Result<()> {
     let origin = *monitor.position();
     let screen = *monitor.size();
 
+    let floating = geometry.placement == Placement::Floating;
+    window.set_resizable(floating)?;
+    window.set_min_size(floating.then(|| Size::from(LogicalSize::new(MIN_WIDTH, MIN_HEIGHT))))?;
+    window.set_max_size(floating.then(|| Size::from(LogicalSize::new(MAX_WIDTH, MAX_HEIGHT))))?;
+
     match geometry.placement {
         Placement::Fullscreen => {
             window.set_size(PhysicalSize::new(screen.width, screen.height))?;
@@ -145,6 +179,24 @@ pub fn apply(window: &WebviewWindow, geometry: Geometry) -> tauri::Result<()> {
         }
         Placement::Floating => {
             window.set_size(LogicalSize::new(geometry.width, geometry.height))?;
+            let screens: Vec<_> = window
+                .available_monitors()?
+                .iter()
+                .map(|monitor| (*monitor.position(), *monitor.size()))
+                .collect();
+            let position = match (geometry.x, geometry.y) {
+                (Some(x), Some(y)) if is_reachable(&screens, x, y) => PhysicalPosition::new(x, y),
+                // First use, or its display is gone: start where Top centre
+                // would be, a little lower so it reads as a separate window.
+                _ => {
+                    let width = (geometry.width * scale).round() as i32;
+                    PhysicalPosition::new(
+                        origin.x + (screen.width as i32 - width) / 2,
+                        origin.y + (TOP_MARGIN * 6.0 * scale).round() as i32,
+                    )
+                }
+            };
+            window.set_position(position)?;
         }
         Placement::TopCenter => {
             window.set_size(LogicalSize::new(geometry.width, geometry.height))?;
@@ -168,4 +220,34 @@ pub fn apply(window: &WebviewWindow, geometry: Geometry) -> tauri::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn screen(x: i32, y: i32, width: u32, height: u32) -> (PhysicalPosition<i32>, PhysicalSize<u32>) {
+        (PhysicalPosition::new(x, y), PhysicalSize::new(width, height))
+    }
+
+    #[test]
+    fn a_position_on_a_connected_display_is_restored() {
+        let screens = [screen(0, 0, 1920, 1080), screen(1920, 0, 2560, 1440)];
+        assert!(is_reachable(&screens, 100, 100));
+        assert!(is_reachable(&screens, 3000, 200));
+    }
+
+    #[test]
+    fn a_position_on_an_unplugged_display_is_not() {
+        let screens = [screen(0, 0, 1920, 1080)];
+        assert!(!is_reachable(&screens, 2500, 200));
+        assert!(!is_reachable(&screens, 100, -400));
+    }
+
+    #[test]
+    fn a_window_hanging_off_the_left_edge_is_unreachable_once_its_grab_bar_is() {
+        let screens = [screen(0, 0, 1920, 1080)];
+        assert!(is_reachable(&screens, -30, 0));
+        assert!(!is_reachable(&screens, -100, 0));
+    }
 }
