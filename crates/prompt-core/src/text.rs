@@ -50,32 +50,67 @@ pub fn is_readable(grapheme: &str) -> bool {
 /// contain CJK are further exploded so each ideograph or kana becomes its own
 /// word, while any Latin run embedded in the same token stays glued together.
 pub fn split_into_words(text: &str) -> Vec<String> {
-    let normalised = text.replace('\n', " ");
+    tokenize(text).into_iter().map(|(word, _)| word).collect()
+}
+
+/// [`split_into_words`], plus how the author broke the text before each word:
+/// `0` within a line, `1` after a line break, `2` after a blank line or more.
+///
+/// The words are exactly the same, so offsets computed from them do not move;
+/// the breaks are only for laying the text out.
+pub fn tokenize(text: &str) -> Vec<(String, u8)> {
     let mut result = Vec::new();
+    let mut newlines = 0usize;
+    // Start of the current token, and the breaks it opens with.
+    let mut token: Option<(usize, u8)> = None;
 
-    for token in normalised.split_whitespace() {
-        if !token.chars().any(is_cjk) {
-            result.push(token.to_string());
-            continue;
-        }
-
-        let mut buffer = String::new();
-        for grapheme in token.graphemes(true) {
-            if grapheme.chars().next().is_some_and(is_cjk) {
-                if !buffer.is_empty() {
-                    result.push(std::mem::take(&mut buffer));
-                }
-                result.push(grapheme.to_string());
-            } else {
-                buffer.push_str(grapheme);
+    for (index, c) in text.char_indices() {
+        if c.is_whitespace() {
+            if let Some((start, breaks)) = token.take() {
+                push_token(&text[start..index], breaks, &mut result);
+                newlines = 0;
             }
+            if c == '\n' {
+                newlines += 1;
+            }
+        } else if token.is_none() {
+            // Newlines before the very first word are not a break.
+            let breaks = if result.is_empty() { 0 } else { newlines.min(2) as u8 };
+            token = Some((index, breaks));
         }
-        if !buffer.is_empty() {
-            result.push(buffer);
-        }
+    }
+    if let Some((start, breaks)) = token {
+        push_token(&text[start..], breaks, &mut result);
     }
 
     result
+}
+
+/// Pushes `token`, exploding any CJK in it into one word per character. Only
+/// the first of those words carries `breaks`.
+fn push_token(token: &str, breaks: u8, result: &mut Vec<(String, u8)>) {
+    let mut breaks = breaks;
+    let mut push = |word: String| result.push((word, std::mem::take(&mut breaks)));
+
+    if !token.chars().any(is_cjk) {
+        push(token.to_string());
+        return;
+    }
+
+    let mut buffer = String::new();
+    for grapheme in token.graphemes(true) {
+        if grapheme.chars().next().is_some_and(is_cjk) {
+            if !buffer.is_empty() {
+                push(std::mem::take(&mut buffer));
+            }
+            push(grapheme.to_string());
+        } else {
+            buffer.push_str(grapheme);
+        }
+    }
+    if !buffer.is_empty() {
+        push(buffer);
+    }
 }
 
 /// Writing direction of a script.
@@ -155,6 +190,28 @@ mod tests {
             split_into_words("hello\nbrave   new\tworld"),
             ["hello", "brave", "new", "world"]
         );
+    }
+
+    #[test]
+    fn counts_the_line_breaks_before_each_word() {
+        let words = tokenize("one two\nthree\r\n\n\n four\n五六");
+        let texts: Vec<_> = words.iter().map(|(text, _)| text.as_str()).collect();
+        let breaks: Vec<_> = words.iter().map(|&(_, breaks)| breaks).collect();
+        assert_eq!(texts, ["one", "two", "three", "four", "五", "六"]);
+        // Two or more newlines are one paragraph break, however many.
+        assert_eq!(breaks, [0, 0, 1, 2, 1, 0]);
+    }
+
+    #[test]
+    fn leading_newlines_are_not_a_break() {
+        assert_eq!(tokenize("\n\nhello"), [("hello".to_string(), 0)]);
+    }
+
+    #[test]
+    fn tokenize_splits_exactly_like_split_into_words() {
+        let text = "Hello [smile]\n\nworld 你好 abc世界def\n end";
+        let words: Vec<_> = tokenize(text).into_iter().map(|(word, _)| word).collect();
+        assert_eq!(words, split_into_words(text));
     }
 
     #[test]

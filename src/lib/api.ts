@@ -51,6 +51,8 @@ export interface WordView {
   /** Grapheme offset one past the word's last character. */
   end: number;
   isAnnotation: boolean;
+  /** Line breaks the author put before this word: 0, 1, or 2 for a blank line. */
+  breaksBefore: number;
 }
 
 export interface ScriptView {

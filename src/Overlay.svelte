@@ -144,7 +144,11 @@
   {#if script && script.words.length > 0}
     <div class="viewport" bind:this={viewport} onwheel={catchUp}>
       <p class="words">
-        {#each script.words as word (word.id)}<button
+        <!-- The author's line breaks, drawn but never tracked: a blank line
+             becomes a short gap rather than a full empty line. -->
+        {#each script.words as word (word.id)}{#if word.breaksBefore > 0}<br
+            />{/if}{#if word.breaksBefore > 1}<span class="paragraph"
+            ></span>{/if}<button
             type="button"
             data-word={word.id}
             class="word"
@@ -328,6 +332,11 @@
     padding: 0;
     color: rgba(255, 255, 255, 0.32);
     overflow-wrap: break-word;
+  }
+
+  .paragraph {
+    display: block;
+    height: 0.5em;
   }
 
   .word {

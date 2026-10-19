@@ -58,6 +58,9 @@ pub struct WordView {
     pub end: usize,
     /// Cue or unspeakable — rendered dimmed and never waited for.
     pub is_annotation: bool,
+    /// Line breaks the author put before this word: 0, 1, or 2 for a blank
+    /// line.
+    pub breaks_before: u8,
 }
 
 /// A freshly loaded script.
@@ -131,6 +134,7 @@ impl Session {
                     start: word.range.start,
                     end: word.range.end,
                     is_annotation: word.is_annotation,
+                    breaks_before: word.breaks_before,
                 })
                 .collect(),
             character_count: script.character_count(),

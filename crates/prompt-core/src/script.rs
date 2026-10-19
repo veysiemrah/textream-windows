@@ -9,7 +9,7 @@
 use std::ops::Range;
 
 use crate::alignment::{annotation_flags, annotation_ranges};
-use crate::text::{graphemes, infer_direction, is_readable, split_into_words, TextDirection};
+use crate::text::{graphemes, infer_direction, is_readable, tokenize, TextDirection};
 
 /// One trackable word, positioned in the normalised text.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,6 +20,10 @@ pub struct PromptWord {
     pub range: Range<usize>,
     /// Part of a cue, or otherwise unspeakable — the tracker slides over it.
     pub is_annotation: bool,
+    /// How the author broke the text before this word: `0` within a line,
+    /// `1` a line break, `2` a blank line. Layout only: the normalised text
+    /// and every offset ignore it.
+    pub breaks_before: u8,
 }
 
 /// A parsed script ready for tracking and rendering.
@@ -43,7 +47,7 @@ impl PromptScript {
     /// ranges be computed by simple accumulation rather than by searching the
     /// original string.
     pub fn new(raw: &str) -> Self {
-        let raw_words = split_into_words(raw);
+        let (raw_words, breaks): (Vec<String>, Vec<u8>) = tokenize(raw).into_iter().unzip();
         let collapsed = raw_words.join(" ");
         let flags = annotation_flags(&raw_words);
 
@@ -57,6 +61,7 @@ impl PromptScript {
                 text: word.clone(),
                 range: range.clone(),
                 is_annotation: flags[index] || !is_readable(word),
+                breaks_before: breaks[index],
             });
             offset = range.end + 1; // the joining space
         }
@@ -231,6 +236,15 @@ impl PromptScript {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remembers_line_and_paragraph_breaks_without_moving_offsets() {
+        let script = PromptScript::new("hello brave\nnew\n\nworld");
+        assert_eq!(script.text(), "hello brave new world");
+        let breaks: Vec<_> = script.words().iter().map(|word| word.breaks_before).collect();
+        assert_eq!(breaks, [0, 0, 1, 2]);
+        assert_eq!(script.words()[3].range, 16..21);
+    }
 
     #[test]
     fn collapses_whitespace_and_indexes_words() {
