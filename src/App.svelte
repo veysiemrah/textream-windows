@@ -104,6 +104,8 @@ Today we are shipping something I have wanted for a long time.
   let frame = 0;
   let lastFrameTime = 0;
   let lastDiagnostics = 0;
+  /** Whether this take has already said it reached the end. */
+  let endAnnounced = false;
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
   const selectedModel = $derived(
@@ -366,6 +368,7 @@ Today we are shipping something I have wanted for a long time.
 
     panelOpen = false;
     running = true;
+    endAnnounced = false;
     lastFrameTime = performance.now();
     frame = requestAnimationFrame(loop);
   }
@@ -409,9 +412,19 @@ Today we are shipping something I have wanted for a long time.
     wordProgress = progress.wordProgress;
 
     if (progress.finished) {
-      say("Reached the end of the script.");
-      await stop();
-      return;
+      // Word Tracking reached the end because the presenter said the last
+      // word, so the take is over. The paced modes only know the scroll got
+      // there — the presenter is usually still finishing the last lines — so
+      // the text stays up until they stop it themselves.
+      if (settings.mode === "wordTracking") {
+        say("Reached the end of the script.");
+        await stop();
+        return;
+      }
+      if (!endAnnounced) {
+        endAnnounced = true;
+        say("Reached the end of the script. Stop when you are done.");
+      }
     }
     if (running) frame = requestAnimationFrame(loop);
   }
