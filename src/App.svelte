@@ -43,6 +43,7 @@ Today we are shipping something I have wanted for a long time.
       fontSize: "lg",
       highlight: "yellow",
       cue: "orange",
+      cueBrightness: "medium",
       opacity: 0.92,
       readingPosition: "upperThird",
     },
@@ -81,6 +82,7 @@ Today we are shipping something I have wanted for a long time.
     orange: "#ff9e0a",
   };
   const COLOR_IDS = Object.keys(COLORS) as ColorPreset[];
+  const CUE_BRIGHTNESS: api.CueBrightness[] = ["dim", "low", "medium", "bright"];
 
   let settings = $state<Settings>({ ...FALLBACK, script: SAMPLE });
   let loaded = $state(false);
@@ -501,7 +503,19 @@ Today we are shipping something I have wanted for a long time.
     cancelAnimationFrame(frame);
     clearTimeout(saveTimer);
   });
+  /**
+   * Ctrl+Enter starts a take from the editor, without reaching for the mouse
+   * — the same gesture that submits in most Windows apps. Start only: while a
+   * take runs the editor is usually hidden, and the global shortcut stops it.
+   */
+  function onKeydown(event: KeyboardEvent) {
+    if (event.key !== "Enter" || !event.ctrlKey || event.repeat || running) return;
+    event.preventDefault();
+    void toggleRun();
+  }
 </script>
+
+<svelte:window onkeydown={onKeydown} />
 
 <div
   class="shell"
@@ -687,6 +701,18 @@ Today we are shipping something I have wanted for a long time.
                   persist();
                 }}
               ></button>
+            {/each}
+          </div>
+          <div class="chips">
+            {#each CUE_BRIGHTNESS as brightness (brightness)}
+              <button
+                class:on={settings.appearance.cueBrightness === brightness}
+                onclick={() => {
+                  settings.appearance.cueBrightness = brightness;
+                  persist();
+                }}
+                >{brightness[0].toUpperCase() + brightness.slice(1)}</button
+              >
             {/each}
           </div>
         </div>

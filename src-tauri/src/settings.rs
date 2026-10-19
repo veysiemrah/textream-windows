@@ -79,6 +79,30 @@ impl ColorPreset {
     }
 }
 
+/// How strongly `[cue]` text shows, mirroring the macOS app's four steps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum CueBrightness {
+    Dim,
+    Low,
+    /// What cues always looked like before this was a setting.
+    #[default]
+    Medium,
+    Bright,
+}
+
+impl CueBrightness {
+    /// Opacity of a cue, and of the cue at the reading position.
+    pub fn opacities(self) -> (f64, f64) {
+        match self {
+            CueBrightness::Dim => (0.3, 0.5),
+            CueBrightness::Low => (0.42, 0.62),
+            CueBrightness::Medium => (0.55, 0.75),
+            CueBrightness::Bright => (0.85, 1.0),
+        }
+    }
+}
+
 /// Where the line being read sits in the prompter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -114,6 +138,7 @@ pub struct Appearance {
     pub highlight: ColorPreset,
     /// Colour of `[cue]` text.
     pub cue: ColorPreset,
+    pub cue_brightness: CueBrightness,
     /// Opacity of the overlay's own background, 0 (fully clear) to 1 (solid).
     pub opacity: f64,
     pub reading_position: ReadingPosition,
@@ -126,6 +151,7 @@ impl Default for Appearance {
             font_size: FontSize::default(),
             highlight: ColorPreset::Yellow,
             cue: ColorPreset::Orange,
+            cue_brightness: CueBrightness::default(),
             opacity: 0.92,
             reading_position: ReadingPosition::default(),
         }
@@ -143,6 +169,8 @@ pub struct AppearanceView {
     pub font_size_px: f64,
     pub highlight: &'static str,
     pub cue: &'static str,
+    pub cue_opacity: f64,
+    pub cue_active_opacity: f64,
     pub opacity: f64,
     /// Fraction of the prompter's height the active line is kept at.
     pub reading_anchor: f64,
@@ -162,6 +190,8 @@ impl Appearance {
             font_size_px: self.font_size.points(),
             highlight: self.highlight.css(),
             cue: self.cue.css(),
+            cue_opacity: self.cue_brightness.opacities().0,
+            cue_active_opacity: self.cue_brightness.opacities().1,
             opacity: self.opacity,
             reading_anchor: self.reading_position.anchor(),
         }
@@ -364,6 +394,17 @@ mod tests {
         assert!(!settings.keep_screen_awake);
         assert_eq!(settings.appearance.reading_position, ReadingPosition::UpperThird);
         assert!((settings.appearance.view().reading_anchor - 1.0 / 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn cues_keep_their_old_look_until_the_brightness_is_changed() {
+        let view = Appearance::default().view();
+        assert_eq!((view.cue_opacity, view.cue_active_opacity), (0.55, 0.75));
+        let bright = Appearance {
+            cue_brightness: CueBrightness::Bright,
+            ..Appearance::default()
+        };
+        assert_eq!(bright.view().cue_active_opacity, 1.0);
     }
 
     #[test]

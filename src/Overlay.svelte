@@ -86,6 +86,8 @@
           `--font-size:${appearance.fontSizePx}px`,
           `--highlight:${appearance.highlight}`,
           `--cue:${appearance.cue}`,
+          `--cue-opacity:${appearance.cueOpacity}`,
+          `--cue-active-opacity:${appearance.cueActiveOpacity}`,
           `--bg-opacity:${appearance.opacity}`,
         ].join(";")
       : "",
@@ -201,6 +203,8 @@
     --font-size: 20px;
     --highlight: #ffd60a;
     --cue: #ff9e0a;
+    --cue-opacity: 0.55;
+    --cue-active-opacity: 0.75;
     --bg-opacity: 0.92;
 
     display: flex;
@@ -367,12 +371,12 @@
     /* Cues are shown — the presenter still needs the direction — but never
        highlighted, so they read as instruction rather than as script. */
     color: var(--cue);
-    opacity: 0.55;
+    opacity: var(--cue-opacity);
     font-style: italic;
     font-weight: 500;
   }
   .word.cue.active {
-    opacity: 0.75;
+    opacity: var(--cue-active-opacity);
   }
 
   .rail {

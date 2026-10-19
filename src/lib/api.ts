@@ -89,10 +89,13 @@ export interface Appearance {
   fontSize: FontSize;
   highlight: ColorPreset;
   cue: ColorPreset;
+  cueBrightness: CueBrightness;
   /** 0 (fully clear) to 1 (solid). */
   opacity: number;
   readingPosition: ReadingPosition;
 }
+
+export type CueBrightness = "dim" | "low" | "medium" | "bright";
 
 /** Where the line being read sits in the prompter. */
 export type ReadingPosition = "upperThird" | "centered";
@@ -103,6 +106,8 @@ export interface AppearanceView {
   fontSizePx: number;
   highlight: string;
   cue: string;
+  cueOpacity: number;
+  cueActiveOpacity: number;
   opacity: number;
   /** Fraction of the prompter's height the active line is kept at. */
   readingAnchor: number;
