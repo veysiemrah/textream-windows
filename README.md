@@ -14,8 +14,16 @@
 
 <p align="center">
   The Windows port of <a href="https://github.com/f/textream"><strong>Textream</strong></a>
-  by <a href="https://fka.dev">Fatih Kadir Akın</a>
+  by <a href="https://fka.dev">Fatih Kadir Akın</a>,
+  ported to Windows by <a href="https://x.com/CRTkafa">CRTkafa</a>,
+  with Turkish speech recognition added in this repository
 </p>
+
+> 🇹🇷 **Türkçe:** Bu depo, [Fatih Kadir Akın](https://github.com/f)'ın macOS
+> uygulaması [Textream](https://github.com/f/textream)'in
+> [CRTkafa](https://x.com/CRTkafa) tarafından yapılan Windows portunu temel alır
+> ve ona Türkçe konuşma tanıma desteği ekler. Sesli takip (Word Tracking)
+> modunda Türkçe metinler artık kelime kelime izlenir.
 
 ---
 
@@ -302,7 +310,9 @@ icon with his blessing. The cue syntax, the three guidance modes, and the
 approach to word tracking are all his design.
 
 - Original macOS app: [github.com/f/textream](https://github.com/f/textream)
-- Windows port: [CRT](https://git.crt.fyi/CRT)
+- Windows port: [CRTkafa](https://x.com/CRTkafa) —
+  [git.crt.fyi/CRT/textream-windows](https://git.crt.fyi/CRT/textream-windows)
+- Turkish speech recognition: [Emrah](https://github.com/veysiemrah)
 
 Speech recognition uses [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) by
 the k2-fsa team, with streaming models published by
