@@ -10,6 +10,7 @@ mod audio;
 mod backdrop;
 mod diagnostics;
 mod document;
+mod markdown;
 mod model;
 mod overlay;
 mod session;

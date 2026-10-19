@@ -48,10 +48,28 @@ pub fn save(path: &Path, script: &str) -> Result<(), String> {
     fs::write(path, encoded).map_err(|error| error.to_string())
 }
 
-/// Reads a `.textream` file at `path`, flattened to one script.
+/// Other files a script can be opened from, by extension: Markdown has its
+/// formatting stripped, plain text is read as it is. Saving always writes
+/// `.textream`.
+pub const MARKDOWN_EXTENSIONS: [&str; 2] = ["md", "markdown"];
+pub const TEXT_EXTENSIONS: [&str; 1] = ["txt"];
+
+/// Reads a script from `path`: a `.textream` file flattened to one script,
+/// or Markdown or plain text by extension.
 pub fn load(path: &Path) -> Result<String, String> {
     let contents = fs::read_to_string(path).map_err(|error| error.to_string())?;
-    decode(&contents)
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    if MARKDOWN_EXTENSIONS.contains(&extension.as_str()) {
+        Ok(crate::markdown::to_script(&contents))
+    } else if TEXT_EXTENSIONS.contains(&extension.as_str()) {
+        Ok(crate::markdown::plain_to_script(&contents))
+    } else {
+        decode(&contents)
+    }
 }
 
 #[cfg(test)]
@@ -112,6 +130,21 @@ mod tests {
         assert_eq!(load(&path).unwrap(), "alpha\n\nbeta");
 
         let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn markdown_and_text_files_are_read_by_extension() {
+        let dir = std::env::temp_dir().join("textream-document-formats");
+        let _ = fs::create_dir_all(&dir);
+        let markdown = dir.join("talk.MD");
+        let text = dir.join("talk.txt");
+        fs::write(&markdown, "# Hello\n\n**world**").unwrap();
+        fs::write(&text, "# Hello\n\n**world**").unwrap();
+
+        assert_eq!(load(&markdown).unwrap(), "Hello\n\nworld");
+        assert_eq!(load(&text).unwrap(), "# Hello\n\n**world**");
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

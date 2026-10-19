@@ -23,6 +23,17 @@ async function filter() {
   return [{ name: "Textream Script", extensions: [ext] }];
 }
 
+/** Markdown and plain text open too; `document.rs` reads them by extension. */
+async function openFilters() {
+  const ext = await extension();
+  return [
+    { name: "Scripts", extensions: [ext, "md", "markdown", "txt"] },
+    { name: "Textream Script", extensions: [ext] },
+    { name: "Markdown", extensions: ["md", "markdown"] },
+    { name: "Text", extensions: ["txt"] },
+  ];
+}
+
 function lastDocumentDirectory(): string | undefined {
   try {
     return localStorage.getItem(LAST_DOCUMENT_DIRECTORY_KEY) || undefined;
@@ -90,8 +101,8 @@ export async function saveScript(script: string): Promise<boolean> {
 }
 
 /**
- * Prompts for a `.textream` file and returns its script, flattened to one
- * continuous page.
+ * Prompts for a `.textream`, Markdown or text file and returns its script,
+ * flattened to one continuous page.
  *
  * Asks for confirmation first when `currentScript` is non-empty, since opening
  * replaces whatever is in the editor and there is no undo for that here — the
@@ -111,7 +122,7 @@ export async function openScript(
     if (!proceed) return null;
   }
 
-  const filters = await filter();
+  const filters = await openFilters();
   const path = await withRememberedDirectory((defaultPath) =>
     open({
       title: "Open script",
