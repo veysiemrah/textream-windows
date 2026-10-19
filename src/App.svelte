@@ -1272,6 +1272,17 @@ Today we are shipping something I have wanted for a long time.
     outline: 2px solid var(--accent);
     outline-offset: -1px;
   }
+  /* The open list is drawn by Windows, on a white sheet unless told
+     otherwise, while the text inherits the app's light ink — near-invisible.
+     A translucent background does not carry over, so the options get the
+     same solid dark the microphone menu's list uses. */
+  select option {
+    background: #0e1015;
+    color: var(--ink);
+  }
+  select option:checked {
+    background: #2a2a1f;
+  }
 
   input[type="range"] {
     width: 100%;
