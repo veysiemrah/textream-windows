@@ -27,7 +27,23 @@ pub fn normalized_rms_i16(samples: &[i16]) -> f32 {
     normalized_rms(&converted)
 }
 
-/// Hysteretic speech gate.
+/// The background level a session starts out assuming: a quiet room on a
+/// typical microphone.
+const INITIAL_NOISE_FLOOR: f32 = 0.002;
+
+/// How fast the noise floor follows the level, in seconds. It falls quickly,
+/// into every pause between words, and rises slowly, so speech barely moves
+/// it while steady noise — a fan, air conditioning — becomes the floor within
+/// a few seconds.
+const FLOOR_FALL_SECONDS: f64 = 0.15;
+const FLOOR_RISE_SECONDS: f64 = 4.0;
+
+/// How far above the noise floor speech must be, as a level ratio: sustained
+/// (about +10 dB) and to open the gate at once (about +18 dB).
+const SUSTAINED_ABOVE_FLOOR: f32 = 3.0;
+const IMMEDIATE_ABOVE_FLOOR: f32 = 8.0;
+
+/// Hysteretic speech gate over an adaptive noise floor.
 ///
 /// Two thresholds and a hangover, because naive level gating chatters: a single
 /// threshold flickers on breath and consonant gaps, which in Voice-Activated
@@ -35,6 +51,12 @@ pub fn normalized_rms_i16(samples: &[i16]) -> f32 {
 /// threshold on consecutive frames to open the gate, anything clearly loud
 /// opens it at once, and the gate then stays open through the hangover so
 /// inter-word pauses do not close it.
+///
+/// Both thresholds sit relative to a tracked noise floor, never below fixed
+/// minimums. Fixed thresholds alone fail both ways: a low-gain microphone
+/// never reaches them, and a noisy room never drops below them, so Voice-
+/// Activated either never scrolls or never stops. Upstream Textream made the
+/// same change in f/textream#61.
 #[derive(Debug, Clone)]
 pub struct VoiceActivityDetector {
     activation_level: f32,
@@ -43,18 +65,22 @@ pub struct VoiceActivityDetector {
     hangover: f64,
     consecutive_active_frames: u32,
     active_until: Option<f64>,
+    noise_floor: f32,
+    last_timestamp: Option<f64>,
 }
 
 impl Default for VoiceActivityDetector {
     fn default() -> Self {
-        Self::new(0.012, 0.04, 2, 0.75)
+        Self::new(0.006, 0.04, 2, 0.75)
     }
 }
 
 impl VoiceActivityDetector {
-    /// * `activation_level` — sustained level that counts as speech.
-    /// * `immediate_activation_level` — level that opens the gate instantly.
-    /// * `required_active_frames` — frames above `activation_level` needed.
+    /// * `activation_level` — the lowest sustained level that counts as speech,
+    ///   however quiet the background.
+    /// * `immediate_activation_level` — the lowest level that opens the gate
+    ///   instantly.
+    /// * `required_active_frames` — frames above the sustained level needed.
     /// * `hangover` — seconds the gate stays open after the last active frame.
     pub fn new(
         activation_level: f32,
@@ -69,15 +95,26 @@ impl VoiceActivityDetector {
             hangover,
             consecutive_active_frames: 0,
             active_until: None,
+            noise_floor: INITIAL_NOISE_FLOOR,
+            last_timestamp: None,
         }
     }
 
     /// Feeds one metered frame. `timestamp` is in seconds, monotonic.
     pub fn process(&mut self, level: f32, timestamp: f64) {
-        if level >= self.immediate_activation_level {
+        // Judged against the floor as it stood before this frame, so a sudden
+        // loud frame is not partly absorbed into the floor it is measured by.
+        let sustained = self
+            .activation_level
+            .max(self.noise_floor * SUSTAINED_ABOVE_FLOOR);
+        let immediate = self
+            .immediate_activation_level
+            .max(self.noise_floor * IMMEDIATE_ABOVE_FLOOR);
+
+        if level >= immediate {
             self.consecutive_active_frames = self.required_active_frames;
             self.extend(timestamp);
-        } else if level >= self.activation_level {
+        } else if level >= sustained {
             self.consecutive_active_frames += 1;
             if self.consecutive_active_frames >= self.required_active_frames {
                 self.extend(timestamp);
@@ -85,6 +122,28 @@ impl VoiceActivityDetector {
         } else {
             self.consecutive_active_frames = 0;
         }
+
+        self.track_floor(level, timestamp);
+    }
+
+    /// Moves the noise floor towards `level`, at a rate set by time rather
+    /// than by frame count, so it behaves the same whatever size of chunks the
+    /// audio device delivers.
+    fn track_floor(&mut self, level: f32, timestamp: f64) {
+        let elapsed = self
+            .last_timestamp
+            .map_or(0.0, |last| (timestamp - last).clamp(0.0, 0.5));
+        self.last_timestamp = Some(timestamp);
+        if !level.is_finite() || elapsed == 0.0 {
+            return;
+        }
+        let seconds = if level < self.noise_floor {
+            FLOOR_FALL_SECONDS
+        } else {
+            FLOOR_RISE_SECONDS
+        };
+        let step = 1.0 - (-elapsed / seconds).exp();
+        self.noise_floor += (level - self.noise_floor) * step as f32;
     }
 
     /// Whether speech is considered active at `timestamp`.
@@ -95,6 +154,8 @@ impl VoiceActivityDetector {
     pub fn reset(&mut self) {
         self.consecutive_active_frames = 0;
         self.active_until = None;
+        self.noise_floor = INITIAL_NOISE_FLOOR;
+        self.last_timestamp = None;
     }
 
     fn extend(&mut self, timestamp: f64) {
@@ -171,6 +232,51 @@ mod tests {
         vad.process(0.0, 0.1); // drop out
         vad.process(0.02, 0.2);
         assert!(!vad.is_active(0.2), "the counter should have restarted");
+    }
+
+    /// Feeds `level` every 10 ms from `start` for `seconds`; returns the end.
+    fn feed(vad: &mut VoiceActivityDetector, level: f32, start: f64, seconds: f64) -> f64 {
+        let frames = (seconds / 0.01).round() as usize;
+        for frame in 0..frames {
+            vad.process(level, start + frame as f64 * 0.01);
+        }
+        start + frames as f64 * 0.01
+    }
+
+    #[test]
+    fn a_low_gain_microphone_still_opens_the_gate() {
+        // A quiet room on a mic with little gain: speech peaks well under the
+        // level a typical mic speaks at, but far above its own background.
+        let mut vad = VoiceActivityDetector::default();
+        let now = feed(&mut vad, 0.0008, 0.0, 3.0);
+        let now = feed(&mut vad, 0.009, now, 0.2);
+        assert!(vad.is_active(now));
+    }
+
+    #[test]
+    fn steady_background_noise_does_not_hold_the_gate_open() {
+        // A fan or air conditioning, louder than quiet speech on some mics.
+        let mut vad = VoiceActivityDetector::default();
+        let now = feed(&mut vad, 0.02, 0.0, 10.0);
+        assert!(!vad.is_active(now), "the noise became the floor");
+
+        // Speech over that noise still gets through.
+        let now = feed(&mut vad, 0.09, now, 0.2);
+        assert!(vad.is_active(now));
+    }
+
+    #[test]
+    fn speech_with_pauses_between_words_keeps_the_gate_working() {
+        // Words at 0.05 with short dips: the floor follows the dips, not the
+        // words, so a long passage does not shut the gate on its own speaker.
+        let mut vad = VoiceActivityDetector::default();
+        let mut now = feed(&mut vad, 0.001, 0.0, 1.0);
+        for _ in 0..30 {
+            now = feed(&mut vad, 0.05, now, 0.35);
+            now = feed(&mut vad, 0.002, now, 0.12);
+        }
+        now = feed(&mut vad, 0.05, now, 0.1);
+        assert!(vad.is_active(now));
     }
 
     #[test]
