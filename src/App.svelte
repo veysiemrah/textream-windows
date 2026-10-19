@@ -37,12 +37,14 @@ Today we are shipping something I have wanted for a long time.
     floatingY: null,
     hideFromCapture: true,
     clickThrough: true,
+    keepScreenAwake: false,
     appearance: {
       fontFamily: "sans",
       fontSize: "lg",
       highlight: "yellow",
       cue: "orange",
       opacity: 0.92,
+      readingPosition: "upperThird",
     },
     modelId: null,
     microphoneId: null,
@@ -389,6 +391,7 @@ Today we are shipping something I have wanted for a long time.
 
     await api.showOverlay(geometry());
     await api.setClickThrough(settings.clickThrough);
+    await api.setKeepAwake(settings.keepScreenAwake);
     const accepted = await api.setHideFromCapture(settings.hideFromCapture);
     if (settings.hideFromCapture && !accepted) {
       say(
@@ -416,6 +419,7 @@ Today we are shipping something I have wanted for a long time.
     diagnostics = null;
     await api.stopSession();
     await api.hideOverlay();
+    await api.setKeepAwake(false);
   }
 
   async function togglePause() {
@@ -481,6 +485,11 @@ Today we are shipping something I have wanted for a long time.
   async function pushClickThrough() {
     persist();
     if (running) await api.setClickThrough(settings.clickThrough);
+  }
+
+  async function pushKeepAwake() {
+    persist();
+    if (running) await api.setKeepAwake(settings.keepScreenAwake);
   }
 
   async function pushHideFromCapture() {
@@ -631,6 +640,16 @@ Today we are shipping something I have wanted for a long time.
             >
           {/each}
         </div>
+        <label class="field">
+          <span class="label">Reading line</span>
+          <select
+            bind:value={settings.appearance.readingPosition}
+            onchange={persist}
+          >
+            <option value="upperThird">A third of the way down</option>
+            <option value="centered">Centred</option>
+          </select>
+        </label>
       </section>
 
       <section>
@@ -709,6 +728,14 @@ Today we are shipping something I have wanted for a long time.
           Clicks cannot both pass through and land on the prompter. Turn this
           off to click a word and jump there.
         </p>
+        <label class="toggle">
+          <input
+            type="checkbox"
+            bind:checked={settings.keepScreenAwake}
+            onchange={pushKeepAwake}
+          />
+          <span>Keep the screen awake while prompting</span>
+        </label>
       </section>
 
       <section>

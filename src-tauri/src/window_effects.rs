@@ -74,3 +74,24 @@ pub fn set_excluded_from_capture(hwnd: isize, enabled: bool) -> bool {
     // SAFETY: valid live HWND; the call only sets this window's affinity.
     unsafe { SetWindowDisplayAffinity(handle(hwnd), affinity).is_ok() }
 }
+
+/// Keeps the display, and the machine, from sleeping until called with
+/// `false`.
+///
+/// The request belongs to the calling thread and lapses when that thread
+/// exits, so it must be made from one that lives as long as the app — the
+/// caller runs it on the main thread.
+pub fn keep_display_awake(enabled: bool) {
+    use windows::Win32::System::Power::{
+        SetThreadExecutionState, ES_CONTINUOUS, ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED,
+    };
+    let flags = if enabled {
+        ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED
+    } else {
+        ES_CONTINUOUS
+    };
+    // SAFETY: only changes this thread's power request.
+    unsafe {
+        SetThreadExecutionState(flags);
+    }
+}

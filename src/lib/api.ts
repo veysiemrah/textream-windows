@@ -91,7 +91,11 @@ export interface Appearance {
   cue: ColorPreset;
   /** 0 (fully clear) to 1 (solid). */
   opacity: number;
+  readingPosition: ReadingPosition;
 }
+
+/** Where the line being read sits in the prompter. */
+export type ReadingPosition = "upperThird" | "centered";
 
 /** Appearance resolved to values the overlay renders directly. */
 export interface AppearanceView {
@@ -100,6 +104,8 @@ export interface AppearanceView {
   highlight: string;
   cue: string;
   opacity: number;
+  /** Fraction of the prompter's height the active line is kept at. */
+  readingAnchor: number;
 }
 
 export interface Settings {
@@ -114,6 +120,8 @@ export interface Settings {
   floatingY: number | null;
   hideFromCapture: boolean;
   clickThrough: boolean;
+  /** Stop the display sleeping while a take runs. */
+  keepScreenAwake: boolean;
   appearance: Appearance;
   modelId: string | null;
   /** Input device to capture from, by name. `null` means system default. */
@@ -266,6 +274,9 @@ export const setClickThrough = (enabled: boolean) =>
 /** Resolves to whether Windows accepted the request — needs 10 2004+. */
 export const setHideFromCapture = (enabled: boolean) =>
   invoke<boolean>("set_hide_from_capture", { enabled });
+
+export const setKeepAwake = (enabled: boolean) =>
+  invoke<void>("set_keep_awake", { enabled });
 
 export type BackdropKind = "mica" | "blur" | "none";
 

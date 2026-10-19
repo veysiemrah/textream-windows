@@ -489,6 +489,16 @@ fn set_hide_from_capture(app: AppHandle, enabled: bool) -> Result<bool, String> 
     ))
 }
 
+/// Keeps the display from sleeping while a take runs, or lets it sleep again.
+///
+/// Sent to the main thread: the request lapses with the thread that made it,
+/// and command handlers are not guaranteed to run on one that lives on.
+#[tauri::command]
+fn set_keep_awake(app: AppHandle, enabled: bool) -> Result<(), String> {
+    app.run_on_main_thread(move || window_effects::keep_display_awake(enabled))
+        .map_err(|error| error.to_string())
+}
+
 /// Brings the main window to the front, restoring it if minimised.
 ///
 /// Shared by the tray's left-click and its "Show Textream" menu item so the
@@ -694,6 +704,7 @@ pub fn run() {
             set_overlay_geometry,
             set_click_through,
             set_hide_from_capture,
+            set_keep_awake,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Textream");

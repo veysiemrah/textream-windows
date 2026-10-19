@@ -79,6 +79,27 @@ impl ColorPreset {
     }
 }
 
+/// Where the line being read sits in the prompter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum ReadingPosition {
+    /// A third of the way down: more of what is coming than of what is gone.
+    #[default]
+    UpperThird,
+    /// Halfway down, with as much context above as below.
+    Centered,
+}
+
+impl ReadingPosition {
+    /// Fraction of the prompter's height the active line is kept at.
+    pub fn anchor(self) -> f64 {
+        match self {
+            ReadingPosition::UpperThird => 1.0 / 3.0,
+            ReadingPosition::Centered => 0.5,
+        }
+    }
+}
+
 /// Lowest and highest background opacity the slider offers.
 pub const MIN_OPACITY: f64 = 0.0;
 pub const MAX_OPACITY: f64 = 1.0;
@@ -95,6 +116,7 @@ pub struct Appearance {
     pub cue: ColorPreset,
     /// Opacity of the overlay's own background, 0 (fully clear) to 1 (solid).
     pub opacity: f64,
+    pub reading_position: ReadingPosition,
 }
 
 impl Default for Appearance {
@@ -105,6 +127,7 @@ impl Default for Appearance {
             highlight: ColorPreset::Yellow,
             cue: ColorPreset::Orange,
             opacity: 0.92,
+            reading_position: ReadingPosition::default(),
         }
     }
 }
@@ -121,6 +144,8 @@ pub struct AppearanceView {
     pub highlight: &'static str,
     pub cue: &'static str,
     pub opacity: f64,
+    /// Fraction of the prompter's height the active line is kept at.
+    pub reading_anchor: f64,
 }
 
 impl Appearance {
@@ -138,6 +163,7 @@ impl Appearance {
             highlight: self.highlight.css(),
             cue: self.cue.css(),
             opacity: self.opacity,
+            reading_anchor: self.reading_position.anchor(),
         }
     }
 
@@ -166,6 +192,10 @@ pub struct Settings {
     pub floating_y: Option<i32>,
     pub hide_from_capture: bool,
     pub click_through: bool,
+    /// Stops the display sleeping while a take runs. Off by default: a
+    /// presenter who wants it knows to turn it on, and nobody else should
+    /// find their screen never sleeping.
+    pub keep_screen_awake: bool,
     pub appearance: Appearance,
     /// Speech model to use, `None` meaning the registry default.
     pub model_id: Option<String>,
@@ -191,6 +221,7 @@ impl Default for Settings {
             floating_y: geometry.y,
             hide_from_capture: true,
             click_through: true,
+            keep_screen_awake: false,
             appearance: Appearance::default(),
             model_id: None,
             microphone_id: None,
@@ -324,6 +355,24 @@ mod tests {
         save(&root, &settings).unwrap();
         assert_eq!(load(&root), settings);
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_file_from_before_the_reading_settings_keeps_todays_behaviour() {
+        let settings: Settings =
+            serde_json::from_str(r#"{ "appearance": { "fontSize": "xl" } }"#).unwrap();
+        assert!(!settings.keep_screen_awake);
+        assert_eq!(settings.appearance.reading_position, ReadingPosition::UpperThird);
+        assert!((settings.appearance.view().reading_anchor - 1.0 / 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn centred_reading_parks_the_active_line_halfway_down() {
+        let appearance = Appearance {
+            reading_position: ReadingPosition::Centered,
+            ..Appearance::default()
+        };
+        assert_eq!(appearance.view().reading_anchor, 0.5);
     }
 
     #[test]

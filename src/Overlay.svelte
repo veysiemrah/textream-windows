@@ -113,9 +113,10 @@
   });
 
   /**
-   * Keeps the active word parked one third down the viewport rather than
-   * centred. The presenter needs to see what is coming more than what is gone,
-   * and a centred anchor wastes half the overlay on already-read text.
+   * Keeps the active word parked at the reading line — by default one third
+   * down the viewport rather than centred. The presenter needs to see what is
+   * coming more than what is gone, and a centred anchor gives half the overlay
+   * to already-read text; some prefer that context, so it is a setting.
    */
   $effect(() => {
     if (!viewport || activeWord < 0) return;
@@ -124,7 +125,9 @@
     );
     if (!node) return;
     const target =
-      node.offsetTop - viewport.clientHeight / 3 + node.offsetHeight / 2;
+      node.offsetTop -
+      viewport.clientHeight * (appearance?.readingAnchor ?? 1 / 3) +
+      node.offsetHeight / 2;
     viewport.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
   });
 </script>
