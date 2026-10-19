@@ -37,12 +37,19 @@ const CONFIRMATION_RADIUS: usize = 10;
 /// still be trimmed away, in characters.
 const ANCHOR_SLACK: usize = 24;
 
+/// Two re-read results this close together count as the same place.
+const REREAD_CONFIRMATION_RADIUS: usize = 15;
+
+/// An update that moves the highlight on by less than this, in graphemes, has
+/// not really progressed — a re-read may be under way.
+const REREAD_STALL: usize = 4;
+
 /// Tracks reading position within a [`PromptScript`] from speech transcripts.
 #[derive(Debug, Clone)]
 pub struct PromptMatcher {
     source: PromptScript,
-    /// Confirmed highlight position, in graphemes. Monotonically increasing
-    /// until an explicit jump or reset.
+    /// Confirmed highlight position, in graphemes. Only ever moves back on an
+    /// explicit jump, a reset, or a confirmed re-read.
     recognized: usize,
     /// Where the current transcript window is measured from.
     match_start_offset: usize,
@@ -51,6 +58,8 @@ pub struct PromptMatcher {
     lowered: Vec<String>,
     /// Picks the position back up when the walks above lose it.
     phrases: PhraseIndex,
+    /// The last re-read seen, waiting for the next result to confirm it.
+    pending_reread: Option<usize>,
     /// The newest transcript seen, matched or not.
     last_transcript: String,
     /// The transcript as it stood at the last jump or resume. The recogniser's
@@ -80,6 +89,7 @@ impl PromptMatcher {
             recent: Vec::with_capacity(RECENT_CAPACITY),
             lowered,
             phrases,
+            pending_reread: None,
             last_transcript: String::new(),
             anchor: String::new(),
         }
@@ -179,11 +189,57 @@ impl PromptMatcher {
             raw_candidate,
         );
 
+        let before = self.recognized;
         if candidate > self.recognized {
             self.commit(candidate, raw_candidate, character_result, word_result);
         }
+        // Words that match nothing ahead still nudge the estimates on by a
+        // character or two, so a near-stall counts as no progress.
+        if self.recognized - before < REREAD_STALL {
+            if self.follow_reread(transcript) {
+                return self.recognized;
+            }
+        } else {
+            self.pending_reread = None;
+        }
         self.recover(transcript);
         self.recognized
+    }
+
+    /// Jumps back when the presenter has gone back to re-read a line, once
+    /// two results in a row agree on where.
+    ///
+    /// The transcript is anchored just before the re-read words, so they are
+    /// matched again from the new position and the highlight lands on the
+    /// last of them rather than on the first.
+    fn follow_reread(&mut self, spoken: &str) -> bool {
+        let Some(reread) = self.phrases.reread(spoken, self.recognized) else {
+            self.pending_reread = None;
+            return false;
+        };
+        let confirmed = self
+            .pending_reread
+            .is_some_and(|pending| pending.abs_diff(reread.start) <= REREAD_CONFIRMATION_RADIUS);
+        if !confirmed {
+            self.pending_reread = Some(reread.start);
+            return false;
+        }
+        self.pending_reread = None;
+
+        let target = advance_past_annotations(
+            self.source.graphemes(),
+            self.source.annotation_ranges(),
+            reread.start,
+        );
+        self.recognized = target;
+        self.match_start_offset = target;
+        self.recent.clear();
+
+        let full = self.last_transcript.chars().count();
+        let before_spoken = full - spoken.chars().count();
+        let keep = before_spoken.max(full.saturating_sub(reread.spoken_chars));
+        self.anchor = self.last_transcript.chars().take(keep).collect();
+        true
     }
 
     /// Takes `candidate` if it is confirmed or the two estimates agree.
@@ -754,6 +810,74 @@ mod tests {
         assert!(m.recognized_character_count() >= script.find(phrase).unwrap() + phrase.len());
         m.match_transcript(&format!("{spoken} today"));
         assert!(m.recognized_character_count() >= m.source().character_count() - 1);
+    }
+
+    const NATO: &str = "alpha bravo charlie delta echo foxtrot golf hotel india juliet \
+        kilo lima mike november oscar papa quebec romeo sierra tango";
+
+    /// Offset of the start of `word` in [`NATO`].
+    fn nato_start(word: &str) -> usize {
+        NATO.find(word).unwrap()
+    }
+
+    #[test]
+    fn going_back_to_reread_a_line_is_followed() {
+        let mut m = matcher(NATO);
+        let read = "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike \
+                    november oscar papa";
+        m.match_transcript(read);
+        let reached = m.recognized_character_count();
+        assert!(reached >= nato_start("papa"));
+
+        m.match_transcript(&format!("{read} foxtrot golf hotel india"));
+        m.match_transcript(&format!("{read} foxtrot golf hotel india juliet"));
+        let now = m.recognized_character_count();
+        assert!(now < reached, "stayed at {now}");
+        assert!(now >= nato_start("foxtrot"), "went back too far: {now}");
+
+        // And reading carries on from the re-read line.
+        let before = now;
+        m.match_transcript(&format!("{read} foxtrot golf hotel india juliet kilo lima"));
+        assert!(m.recognized_character_count() > before);
+    }
+
+    #[test]
+    fn one_misheard_phrase_does_not_pull_the_highlight_back() {
+        let mut m = matcher(NATO);
+        let read = "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike \
+                    november oscar papa";
+        m.match_transcript(read);
+        let reached = m.recognized_character_count();
+        // A single result that happens to echo earlier words is not enough.
+        m.match_transcript(&format!("{read} foxtrot golf hotel india"));
+        assert!(m.recognized_character_count() >= reached);
+    }
+
+    #[test]
+    fn a_pause_on_the_words_just_read_does_not_pull_it_back() {
+        let mut m = matcher(NATO);
+        let read = "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike \
+                    november oscar papa";
+        m.match_transcript(read);
+        let reached = m.recognized_character_count();
+        // The presenter stops; the recogniser keeps revising its last word.
+        // Those words sit just behind the highlight, but nobody went back.
+        for revision in ["pappa", "papaa", "pappa", "papa"] {
+            let now = m.match_transcript(&read.replace("papa", revision));
+            assert!(now >= reached, "pulled back to {now} on {revision}");
+        }
+    }
+
+    #[test]
+    fn a_short_echo_of_earlier_words_does_not_pull_it_back() {
+        let mut m = matcher(NATO);
+        let read = "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike \
+                    november oscar papa";
+        m.match_transcript(read);
+        let reached = m.recognized_character_count();
+        m.match_transcript(&format!("{read} golf hotel india"));
+        m.match_transcript(&format!("{read} golf hotel india"));
+        assert!(m.recognized_character_count() >= reached);
     }
 
     #[test]

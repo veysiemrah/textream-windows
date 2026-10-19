@@ -7,13 +7,31 @@
 //! there. It never moves just because sound arrived: a phrase has to be long,
 //! unique, and ahead of where the highlight already is.
 //!
-//! Ported from upstream Textream's `SpeechRecoveryMatcher` (f/textream#119),
-//! with one change: words are compared through [`fold_case`] rather than with
-//! accents stripped, since stripping would make Turkish `ı`/`i` or `ş`/`s` —
-//! different letters — compare equal.
+//! It also follows the presenter *back*: going back to re-read a line leaves
+//! the walks with nothing ahead to match, so the last few spoken words are
+//! looked for behind the highlight too ([`PhraseIndex::reread`]).
+//!
+//! Ported from upstream Textream's `SpeechRecoveryMatcher` (f/textream#119)
+//! and its re-read regression (f/textream#122), with one change: words are
+//! compared through [`fold_case`] rather than with accents stripped, since
+//! stripping would make Turkish `ı`/`i` or `ş`/`s` — different letters —
+//! compare equal.
 
+use crate::matcher::is_fuzzy_match;
 use crate::script::PromptScript;
 use crate::text::{fold_case, split_into_words};
+
+/// How far behind the highlight a re-read is looked for, in graphemes —
+/// a few lines.
+const REREAD_WINDOW: usize = 700;
+
+/// How many of the newest spoken words must match a run behind the highlight
+/// before it counts as a re-read.
+const REREAD_MIN_WORDS: usize = 4;
+
+/// A re-read must land at least this far back, in graphemes; anything closer
+/// is ordinary jitter around the current word.
+const REREAD_MIN_DISTANCE: usize = 20;
 
 /// How many of the newest spoken words make up a candidate phrase.
 const RECENT_WORDS: usize = 6;
@@ -37,8 +55,21 @@ const MIN_ADVANCE: usize = 12;
 #[derive(Debug, Clone)]
 struct IndexedWord {
     normalized: String,
+    /// Grapheme offset of the word's first character.
+    start: usize,
     /// Grapheme offset just past the word.
     end: usize,
+}
+
+/// Where a re-read starts, and how much of the transcript it accounts for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Reread {
+    /// Grapheme offset of the first re-read word in the script.
+    pub start: usize,
+    /// Characters at the end of the transcript that belong to the re-read
+    /// (the matched words and the spaces before them), to be matched again
+    /// from `start`.
+    pub spoken_chars: usize,
 }
 
 /// The script's speakable words, normalised once for phrase lookup.
@@ -55,6 +86,7 @@ impl PhraseIndex {
             .filter(|word| !word.is_annotation)
             .map(|word| IndexedWord {
                 normalized: normalize(&word.text),
+                start: word.range.start,
                 end: word.range.end,
             })
             .filter(|word| !word.normalized.is_empty())
@@ -106,6 +138,60 @@ impl PhraseIndex {
             }
         }
         None
+    }
+}
+
+impl PhraseIndex {
+    /// Where the presenter went back to, if the newest spoken words match a
+    /// run of words a few lines behind `current`; `None` otherwise.
+    ///
+    /// One result is never enough to act on — the caller confirms it against
+    /// the next one, so a single misheard phrase cannot drag the highlight
+    /// back.
+    pub(crate) fn reread(&self, spoken: &str, current: usize) -> Option<Reread> {
+        let spoken: Vec<(String, usize)> = split_into_words(spoken)
+            .iter()
+            .map(|word| (normalize(word), word.chars().count()))
+            .filter(|(word, _)| !word.is_empty())
+            .collect();
+        if spoken.len() < REREAD_MIN_WORDS {
+            return None;
+        }
+        let tail = &spoken[spoken.len().saturating_sub(REREAD_MIN_WORDS + 2)..];
+
+        let window_start = current.saturating_sub(REREAD_WINDOW);
+        let behind: Vec<&IndexedWord> = self
+            .words
+            .iter()
+            .filter(|word| word.start >= window_start && word.start < current)
+            .collect();
+
+        // The longest run of script words, from each starting point, that the
+        // tail spells out in order. Spoken words that match nothing (a
+        // stumble, a filler) are stepped over.
+        let mut best: Option<(usize, usize)> = None;
+        for from in 0..behind.len() {
+            let mut length = 0;
+            for (spoken, _) in tail {
+                let Some(word) = behind.get(from + length) else { break };
+                if is_fuzzy_match(&word.normalized, spoken) {
+                    length += 1;
+                }
+            }
+            if length > best.map_or(0, |(_, longest)| longest) {
+                best = Some((from, length));
+            }
+        }
+
+        let (from, length) = best?;
+        let (start, end) = (behind[from].start, behind[from + length - 1].end);
+        // A run that reaches up to the highlight is just the words read last —
+        // a pause, or the recogniser revising them — not a step back. A real
+        // re-read ends well behind it.
+        (length >= REREAD_MIN_WORDS && end + REREAD_MIN_DISTANCE < current).then(|| Reread {
+            start,
+            spoken_chars: tail.iter().map(|(_, chars)| chars + 1).sum(),
+        })
     }
 }
 
