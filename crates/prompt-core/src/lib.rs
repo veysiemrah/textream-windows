@@ -40,6 +40,7 @@
 
 pub mod alignment;
 pub mod matcher;
+mod recovery;
 pub mod script;
 pub mod scroll;
 pub mod text;

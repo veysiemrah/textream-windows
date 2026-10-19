@@ -20,6 +20,7 @@ use crate::alignment::{
     advance_past_annotations, best_offset, is_annotation_word, should_commit,
     DEFAULT_AGREEMENT_TOLERANCE,
 };
+use crate::recovery::PhraseIndex;
 use crate::script::PromptScript;
 use crate::text::{fold_case, graphemes, is_readable, split_into_words};
 
@@ -48,6 +49,8 @@ pub struct PromptMatcher {
     recent: Vec<usize>,
     /// Lowercased graphemes of the source, cached for the character pass.
     lowered: Vec<String>,
+    /// Picks the position back up when the walks above lose it.
+    phrases: PhraseIndex,
     /// The newest transcript seen, matched or not.
     last_transcript: String,
     /// The transcript as it stood at the last jump or resume. The recogniser's
@@ -68,6 +71,7 @@ impl PromptMatcher {
         // index mapping, so no case change can shift the offsets the matcher
         // returns.
         let lowered = source.graphemes().iter().map(|g| fold_case(g)).collect();
+        let phrases = PhraseIndex::new(&source);
 
         Self {
             source,
@@ -75,6 +79,7 @@ impl PromptMatcher {
             match_start_offset: start,
             recent: Vec::with_capacity(RECENT_CAPACITY),
             lowered,
+            phrases,
             last_transcript: String::new(),
             anchor: String::new(),
         }
@@ -174,10 +179,21 @@ impl PromptMatcher {
             raw_candidate,
         );
 
-        if candidate <= self.recognized {
-            return self.recognized;
+        if candidate > self.recognized {
+            self.commit(candidate, raw_candidate, character_result, word_result);
         }
+        self.recover(transcript);
+        self.recognized
+    }
 
+    /// Takes `candidate` if it is confirmed or the two estimates agree.
+    fn commit(
+        &mut self,
+        candidate: usize,
+        raw_candidate: usize,
+        character_result: usize,
+        word_result: usize,
+    ) {
         self.recent.push(candidate);
         if self.recent.len() > RECENT_CAPACITY {
             self.recent.remove(0);
@@ -199,7 +215,27 @@ impl PromptMatcher {
         ) {
             self.recognized = candidate;
         }
-        self.recognized
+    }
+
+    /// Jumps ahead when the newest spoken words are a clear phrase further on
+    /// than the walks can reach — a skipped sentence, or a burst of misheard
+    /// words.
+    ///
+    /// The transcript is then anchored, exactly as for a tapped jump: the
+    /// words that led here are spent, and matched again from the new position
+    /// they would only push it on.
+    fn recover(&mut self, spoken: &str) {
+        let Some(offset) = self.phrases.recovered_offset(spoken, self.recognized) else {
+            return;
+        };
+        self.recognized = advance_past_annotations(
+            self.source.graphemes(),
+            self.source.annotation_ranges(),
+            offset,
+        );
+        self.match_start_offset = self.recognized;
+        self.recent.clear();
+        self.anchor.clone_from(&self.last_transcript);
     }
 
     /// The part of `transcript` spoken after the anchor.
@@ -680,6 +716,44 @@ mod tests {
         m.restart_from_current_progress();
         m.match_transcript("alpha beta");
         assert!(m.recognized_character_count() >= "alpha beta".len());
+    }
+
+    const SKIPPED: &str = "New extraordinary interconnected computational research methods \
+        and technologies are changing our everyday lives around the world.";
+
+    #[test]
+    fn a_skipped_stretch_is_recovered_from_a_clear_phrase() {
+        let mut m = PromptMatcher::new(PromptScript::new(SKIPPED), 3);
+        let target = SKIPPED.find("changing our everyday lives").unwrap()
+            + "changing our everyday lives".len();
+        let spoken = "New something wrong changing our everyday lives";
+
+        let recovered = m.match_transcript(spoken);
+        assert!((target..=target + 1).contains(&recovered), "{recovered} vs {target}");
+        // The same partial result again must not push it any further.
+        assert_eq!(m.match_transcript(spoken), recovered);
+        assert_eq!(m.match_transcript(""), recovered);
+
+        // Reading carries on from there, word by word.
+        assert!(m.match_transcript(&format!("{spoken} around")) > recovered);
+        m.match_transcript(&format!("{spoken} around the world"));
+        assert!(m.recognized_character_count() >= m.source().character_count() - 1);
+    }
+
+    #[test]
+    fn a_long_stall_is_caught_up() {
+        let script = format!(
+            "Start {} researchers discover entirely new scientific methods today.",
+            vec!["unread"; 45].join(" ")
+        );
+        let mut m = PromptMatcher::new(PromptScript::new(&script), 5);
+        let phrase = "researchers discover entirely new scientific methods";
+        let spoken = format!("something went wrong {phrase}");
+
+        m.match_transcript(&spoken);
+        assert!(m.recognized_character_count() >= script.find(phrase).unwrap() + phrase.len());
+        m.match_transcript(&format!("{spoken} today"));
+        assert!(m.recognized_character_count() >= m.source().character_count() - 1);
     }
 
     #[test]
