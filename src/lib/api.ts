@@ -93,6 +93,10 @@ export interface Appearance {
   /** 0 (fully clear) to 1 (solid). */
   opacity: number;
   readingPosition: ReadingPosition;
+  /** Fullscreen only: 0.5–1.5 times the size worked out from the width. */
+  fullscreenTextScale: number;
+  /** Fullscreen only: 0–0.4 of the screen width on each side. */
+  fullscreenSideMargin: number;
 }
 
 export type CueBrightness = "dim" | "low" | "medium" | "bright";
@@ -111,6 +115,8 @@ export interface AppearanceView {
   opacity: number;
   /** Fraction of the prompter's height the active line is kept at. */
   readingAnchor: number;
+  fullscreenTextScale: number;
+  fullscreenSideMargin: number;
 }
 
 export interface Settings {

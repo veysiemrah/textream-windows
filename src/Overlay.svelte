@@ -88,6 +88,8 @@
           `--cue:${appearance.cue}`,
           `--cue-opacity:${appearance.cueOpacity}`,
           `--cue-active-opacity:${appearance.cueActiveOpacity}`,
+          `--fullscreen-scale:${appearance.fullscreenTextScale}`,
+          `--fullscreen-margin:${appearance.fullscreenSideMargin}`,
           `--bg-opacity:${appearance.opacity}`,
         ].join(";")
       : "",
@@ -134,7 +136,13 @@
   });
 </script>
 
-<div class="pill" class:floating dir={script?.direction ?? "ltr"} {style}>
+<div
+  class="pill"
+  class:floating
+  class:fullscreen={placement === "fullscreen"}
+  dir={script?.direction ?? "ltr"}
+  {style}
+>
   {#if floating}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="grab" title="Drag to move" onpointerdown={beginDrag}></div>
@@ -230,6 +238,19 @@
       inset 0 0 0 1px rgba(255, 255, 255, 0.06);
     font:
       600 var(--font-size) / 1.65 var(--font-stack);
+  }
+
+  /* Fullscreen sizes text from the screen, as the macOS app does — the window
+     presets are far too small for a prompter display — then scales it by the
+     setting. Side margins narrow the lines so the reader's eyes stay near the
+     lens instead of sweeping edge to edge. */
+  .pill.fullscreen {
+    --fullscreen-scale: 1;
+    --fullscreen-margin: 0.08;
+    font-size: calc(clamp(48px, 100vw / 14, 96px) * var(--fullscreen-scale));
+    padding-left: calc(var(--fullscreen-margin) * 100vw);
+    padding-right: calc(var(--fullscreen-margin) * 100vw);
+    border-radius: 0;
   }
 
   .pill.floating {

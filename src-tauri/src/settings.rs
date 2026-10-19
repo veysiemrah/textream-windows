@@ -128,6 +128,13 @@ impl ReadingPosition {
 pub const MIN_OPACITY: f64 = 0.0;
 pub const MAX_OPACITY: f64 = 1.0;
 
+/// Fullscreen text is sized from the screen width; this scales that size.
+pub const MIN_FULLSCREEN_TEXT_SCALE: f64 = 0.5;
+pub const MAX_FULLSCREEN_TEXT_SCALE: f64 = 1.5;
+
+/// Widest fullscreen side margin, as a fraction of the screen width per side.
+pub const MAX_FULLSCREEN_SIDE_MARGIN: f64 = 0.4;
+
 /// How the overlay looks.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -142,6 +149,12 @@ pub struct Appearance {
     /// Opacity of the overlay's own background, 0 (fully clear) to 1 (solid).
     pub opacity: f64,
     pub reading_position: ReadingPosition,
+    /// Fullscreen only: scales the size worked out from the screen width.
+    /// The window presets are far too small for a prompter screen, and narrow
+    /// lines keep the reader's eyes from sweeping across the camera.
+    pub fullscreen_text_scale: f64,
+    /// Fullscreen only: blank space on each side, as a fraction of the width.
+    pub fullscreen_side_margin: f64,
 }
 
 impl Default for Appearance {
@@ -154,6 +167,8 @@ impl Default for Appearance {
             cue_brightness: CueBrightness::default(),
             opacity: 0.92,
             reading_position: ReadingPosition::default(),
+            fullscreen_text_scale: 1.0,
+            fullscreen_side_margin: 0.08,
         }
     }
 }
@@ -174,6 +189,8 @@ pub struct AppearanceView {
     pub opacity: f64,
     /// Fraction of the prompter's height the active line is kept at.
     pub reading_anchor: f64,
+    pub fullscreen_text_scale: f64,
+    pub fullscreen_side_margin: f64,
 }
 
 impl Appearance {
@@ -194,15 +211,33 @@ impl Appearance {
             cue_active_opacity: self.cue_brightness.opacities().1,
             opacity: self.opacity,
             reading_anchor: self.reading_position.anchor(),
+            fullscreen_text_scale: self.fullscreen_text_scale,
+            fullscreen_side_margin: self.fullscreen_side_margin,
         }
     }
 
     fn sanitised(mut self) -> Self {
-        self.opacity = if self.opacity.is_finite() {
-            self.opacity.clamp(MIN_OPACITY, MAX_OPACITY)
-        } else {
-            Self::default().opacity
+        let fallback = Self::default();
+        let clamp = |value: f64, min: f64, max: f64, fallback: f64| {
+            if value.is_finite() {
+                value.clamp(min, max)
+            } else {
+                fallback
+            }
         };
+        self.opacity = clamp(self.opacity, MIN_OPACITY, MAX_OPACITY, fallback.opacity);
+        self.fullscreen_text_scale = clamp(
+            self.fullscreen_text_scale,
+            MIN_FULLSCREEN_TEXT_SCALE,
+            MAX_FULLSCREEN_TEXT_SCALE,
+            fallback.fullscreen_text_scale,
+        );
+        self.fullscreen_side_margin = clamp(
+            self.fullscreen_side_margin,
+            0.0,
+            MAX_FULLSCREEN_SIDE_MARGIN,
+            fallback.fullscreen_side_margin,
+        );
         self
     }
 }
@@ -405,6 +440,21 @@ mod tests {
             ..Appearance::default()
         };
         assert_eq!(bright.view().cue_active_opacity, 1.0);
+    }
+
+    #[test]
+    fn fullscreen_size_and_margins_are_kept_in_range() {
+        let wild = Appearance {
+            fullscreen_text_scale: 9.0,
+            fullscreen_side_margin: f64::NAN,
+            ..Appearance::default()
+        }
+        .sanitised();
+        assert_eq!(wild.fullscreen_text_scale, MAX_FULLSCREEN_TEXT_SCALE);
+        assert_eq!(wild.fullscreen_side_margin, 0.08);
+
+        let view = Appearance::default().view();
+        assert_eq!((view.fullscreen_text_scale, view.fullscreen_side_margin), (1.0, 0.08));
     }
 
     #[test]

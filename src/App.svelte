@@ -46,6 +46,8 @@ Today we are shipping something I have wanted for a long time.
       cueBrightness: "medium",
       opacity: 0.92,
       readingPosition: "upperThird",
+      fullscreenTextScale: 1,
+      fullscreenSideMargin: 0.08,
     },
     modelId: null,
     microphoneId: null,
@@ -608,26 +610,64 @@ Today we are shipping something I have wanted for a long time.
           {/if}
         </p>
 
-        <label class="field">
-          <span class="label">Width <b>{settings.width}</b></span>
-          <input
-            type="range"
-            min="280"
-            max="1200"
-            bind:value={settings.width}
-            oninput={pushGeometry}
-          />
-        </label>
-        <label class="field">
-          <span class="label">Height <b>{settings.height}</b></span>
-          <input
-            type="range"
-            min="100"
-            max="400"
-            bind:value={settings.height}
-            oninput={pushGeometry}
-          />
-        </label>
+        {#if settings.placement === "fullscreen"}
+          <!-- Fullscreen fills the display, so width and height mean nothing
+               there; its text is sized from the screen instead. -->
+          <label class="field">
+            <span class="label"
+              >Text size <b
+                >{Math.round(settings.appearance.fullscreenTextScale * 100)}%</b
+              ></span
+            >
+            <input
+              type="range"
+              min="0.5"
+              max="1.5"
+              step="0.05"
+              bind:value={settings.appearance.fullscreenTextScale}
+              oninput={persist}
+            />
+          </label>
+          <label class="field">
+            <span class="label"
+              >Side margins <b
+                >{Math.round(settings.appearance.fullscreenSideMargin * 100)}%</b
+              ></span
+            >
+            <input
+              type="range"
+              min="0"
+              max="0.4"
+              step="0.02"
+              bind:value={settings.appearance.fullscreenSideMargin}
+              oninput={persist}
+            />
+          </label>
+          <p class="note">
+            Narrower lines keep your eyes from sweeping across the camera.
+          </p>
+        {:else}
+          <label class="field">
+            <span class="label">Width <b>{settings.width}</b></span>
+            <input
+              type="range"
+              min="280"
+              max="1200"
+              bind:value={settings.width}
+              oninput={pushGeometry}
+            />
+          </label>
+          <label class="field">
+            <span class="label">Height <b>{settings.height}</b></span>
+            <input
+              type="range"
+              min="100"
+              max="400"
+              bind:value={settings.height}
+              oninput={pushGeometry}
+            />
+          </label>
+        {/if}
       </section>
 
       <section>
